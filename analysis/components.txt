@@ -1,0 +1,36 @@
+Masterpg application components :
+
+- In main.rs :
+
+	fn main() :
+		- Calls the compose() method for every command line parameter, passing a TextIOHandler instance
+		- Handles the Composer.compose()'s Result<(), String> output.
+
+- In lib.rs
+		- functions :
+			- compose(file_path, io_handler: Tioh) -> Result<(), 
+					* reads the very text and texts referenced by <+master> tags in one large text;
+					* reads the first <+output> tag found as output text/file name;
+					* replaces all <+placeholder> tags with the corresponding <+actual> contents;
+						(Mind that <+placeholder other> tags can be embedded inside <+actual> tags !
+						However, no <+actual> tags can be embedded in other <+actual> tags.)
+					* removes all remaining <+*> tags;
+					* writes resulting text to the text/file having a name read from the first <+output> tag.
+
+		- mod text_io ---> Better in a separate crate under rust/programs/string_io_and_mock. Can be referenced by masterpg.
+			- trait TextIOHandler
+					- fn read_text(&self, name: &str) -> Result<String, String>;
+					- fn write_text(&self, name: &str, String) -> Result<(), String>;
+
+			- struct FileTextHandler : implements TextIOHandler using std::io::Write and std::io::Read implementors
+
+			- struct MockTextHandler : implements TextIOHandler (for tests) using an internal name/String hashmap
+					in such a way that texts can be fed to it at the beginning of a test, before the call to Composer::compose,
+					and output texts can be read and checked after the call to Composer::compose.
+					- Properties :
+						- texts: HashMap<String, String>
+								The key is a text name, the value is a text.
+								The names can contain file path interpunctions : ~ / \ etc.
+
+		- mod tests :
+			- unit tests on Composer's methods, using only MockTextHandler objects.
