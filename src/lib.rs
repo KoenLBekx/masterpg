@@ -28,13 +28,13 @@ enum MasterPageTag {
     Comment,
     Output(String),
     Master(String),
-    Actual(String),
+    Actual(Vec<PageContent>),
     Calc(Calculation),
     PlaceHolder(String),
 }
 
 enum PageContent {
-    Tag(MasterPageTag),
+    MPTag(MasterPageTag),
     Other(String),
 }
 
@@ -42,13 +42,18 @@ fn whitespace(input: &str)-> IResult<&str, &str> {
     is_a(" \t\n\r")(input)
 }
 
-fn master_page_tag_no_children_content(input: &str) -> IResult<&str, Vec<String>> {
+fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<&str, Vec<String>> {
+    let closing_mark = match self_contained {
+        true => "/>",
+        false => ">",
+    };
+
     delimited(
         terminated(tag("<+"), opt(whitespace)),
         map(
             pair(
                 terminated(
-                    is_not(" \t\n\r/>"),
+                    is_not(" \t\n\r/><"),
                     is_a(" \t\n\r")
                 ),
                 separated_list0(
@@ -56,7 +61,7 @@ fn master_page_tag_no_children_content(input: &str) -> IResult<&str, Vec<String>
                     map(
                         many0(
                             alt((
-                                is_not(" \t\n\r/>"),
+                                is_not(" \t\n\r/><"),
                                 terminated(tag("/"), peek(is_not(">")))
                             ))
                         ),
@@ -87,7 +92,7 @@ fn master_page_tag_no_children_content(input: &str) -> IResult<&str, Vec<String>
                 result_vec
             }
         ),
-        preceded(opt(whitespace), tag("/>"))
+        preceded(opt(whitespace), tag(closing_mark))
     )(input)
 }
 
@@ -95,7 +100,7 @@ fn master_page_closing_tag(input: &str) -> IResult<&str, String> {
     map(
         delimited(
             terminated(tag("</+"), opt(whitespace)),
-            is_not(" \t\n\r/>"),
+            is_not(" \t\n\r/><"),
             preceded(opt(whitespace), tag(">"))
         ),
         |found| String::from(found)
@@ -114,89 +119,107 @@ mod tests {
     use super::*;
 
     #[test]
-    fn master_page_tag_no_children_single_content() {
+    fn master_page_tag_self_contained_empty() {
+        assert!(master_page_tag_opening_content("<+ />", true).is_err());
+    }
+
+    #[test]
+    fn master_page_tag_opening_empty() {
+        assert!(master_page_tag_opening_content("<+>", true).is_err());
+    }
+
+    #[test]
+    fn master_page_tag_self_contained_single_content() {
         assert_eq!(
             Ok(("", vec!["master".to_string()])),
-            master_page_tag_no_children_content("<+master />")
+            master_page_tag_opening_content("<+master />", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_double_content() {
+    fn master_page_tag_self_contained_double_content() {
         assert_eq!(
             Ok(("", vec!["master".to_string(), "general.mpm".to_string()])),
-            master_page_tag_no_children_content("<+master    general.mpm/>")
+            master_page_tag_opening_content("<+master    general.mpm/>", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_line_break() {
+    fn master_page_tag_opening_double_content() {
+        assert_eq!(
+            Ok(("", vec!["actual".to_string(), "header".to_string()])),
+            master_page_tag_opening_content("<+actual header>", false)
+        );
+    }
+
+    #[test]
+    fn master_page_tag_self_contained_line_break() {
         assert_eq!(
             Ok(("", vec!["master".to_string(), "general.mpm".to_string()])),
-            master_page_tag_no_children_content("<+master\ngeneral.mpm/>")
+            master_page_tag_opening_content("<+master\ngeneral.mpm/>", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_surrounding_spaces() {
+    fn master_page_tag_self_contained_surrounding_spaces() {
         assert_eq!(
             Ok(("", vec!["master".to_string(), "general.mpm".to_string()])),
-            master_page_tag_no_children_content("<+ master general.mpm  />")
+            master_page_tag_opening_content("<+ master general.mpm  />", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_text_after() {
+    fn master_page_tag_self_contained_text_after() {
         assert_eq!(
             Ok(("and some more", vec!["master".to_string(), "general.mpm".to_string()])),
-            master_page_tag_no_children_content("<+master general.mpm/>and some more")
+            master_page_tag_opening_content("<+master general.mpm/>and some more", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_single_slash() {
+    fn master_page_tag_self_contained_single_slash() {
         assert_eq!(
             Ok(("", vec!["master".to_string(), "/".to_string(), "general.mpm".to_string()])),
-            master_page_tag_no_children_content("<+master / general.mpm/>")
+            master_page_tag_opening_content("<+master / general.mpm/>", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_no_slash_in_first_word() {
+    fn master_page_tag_self_contained_no_slash_in_first_word() {
         /*
         // The test succeeds also this way, but we're not interested in the specifics of the error.
         // Furthermore, we don't want to rewrite this test if the nom crate changes its error
         // generation.
         assert_eq!(
             Err(nom::Err::Error(nom::error::Error { input: "/ter general.mpm/>", code: ErrorKind::IsA })),
-            master_page_tag_no_children_content("<+mas/ter general.mpm/>")
+            master_page_tag_opening_content("<+mas/ter general.mpm/>", true)
         );
         */
 
-        assert!(master_page_tag_no_children_content("<+mas/ter general.mpm/>").is_err());
+        assert!(master_page_tag_opening_content("<+mas/ter general.mpm/>", true).is_err());
     }
 
     #[test]
-    fn master_page_tag_no_children_double_slash() {
+    fn master_page_tag_self_contained_double_slash() {
         assert_eq!(
             Ok(("", vec!["master".to_string(), "//".to_string(), "general.mpm".to_string()])),
-            master_page_tag_no_children_content("<+master // general.mpm/>")
+            master_page_tag_opening_content("<+master // general.mpm/>", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_slash_in_word() {
+    fn master_page_tag_self_contained_slash_in_word() {
         assert_eq!(
             Ok(("", vec!["master".to_string(), "a/a//azz".to_string(), "general.mpm".to_string()])),
-            master_page_tag_no_children_content("<+master a/a//azz general.mpm/>")
+            master_page_tag_opening_content("<+master a/a//azz general.mpm/>", true)
         );
     }
 
     #[test]
-    fn master_page_tag_no_children_non_greedy() {
+    fn master_page_tag_self_contained_non_greedy() {
         assert_eq!(
             Ok((" general.mpm/>", vec!["master".to_string()])),
-            master_page_tag_no_children_content("<+master /> general.mpm/>")
+            master_page_tag_opening_content("<+master /> general.mpm/>", true)
         );
     }
 
