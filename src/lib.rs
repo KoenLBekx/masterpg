@@ -91,11 +91,14 @@ fn master_page_tag_no_children_content(input: &str) -> IResult<&str, Vec<String>
     )(input)
 }
 
-fn master_page_closing_tag(input: &str) -> IResult<&str, &str> {
-    delimited(
-        terminated(tag("</+"), opt(whitespace)),
-        is_not(" \t\n\r/>"),
-        preceded(opt(whitespace), tag(">"))
+fn master_page_closing_tag(input: &str) -> IResult<&str, String> {
+    map(
+        delimited(
+            terminated(tag("</+"), opt(whitespace)),
+            is_not(" \t\n\r/>"),
+            preceded(opt(whitespace), tag(">"))
+        ),
+        |found| String::from(found)
     )(input)
 }
 
@@ -160,11 +163,17 @@ mod tests {
 
     #[test]
     fn master_page_tag_no_children_no_slash_in_first_word() {
+        /*
+        // The test succeeds also this way, but we're not interested in the specifics of the error.
+        // Furthermore, we don't want to rewrite this test if the nom crate changes its error
+        // generation.
         assert_eq!(
-            // Err("/ter general.mpm/>", vec!["mas".to_string()]),
             Err(nom::Err::Error(nom::error::Error { input: "/ter general.mpm/>", code: ErrorKind::IsA })),
             master_page_tag_no_children_content("<+mas/ter general.mpm/>")
         );
+        */
+
+        assert!(master_page_tag_no_children_content("<+mas/ter general.mpm/>").is_err());
     }
 
     #[test]
@@ -189,5 +198,49 @@ mod tests {
             Ok((" general.mpm/>", vec!["master".to_string()])),
             master_page_tag_no_children_content("<+master /> general.mpm/>")
         );
+    }
+
+    #[test]
+    fn master_page_closing_tag_no_spaces() {
+        assert_eq!(
+            Ok(("", "actual".to_string())),
+            master_page_closing_tag("</+actual>")
+        );
+    }
+
+    #[test]
+    fn master_page_closing_tag_spaces() {
+        assert_eq!(
+            Ok(("", "actual".to_string())),
+            master_page_closing_tag("</+ \t actual >")
+        );
+    }
+
+    #[test]
+    fn master_page_closing_tag_text_after() {
+        assert_eq!(
+            Ok(("Hello everybody, ...", "actual".to_string())),
+            master_page_closing_tag("</+ \t actual >Hello everybody, ...")
+        );
+    }
+
+    #[test]
+    fn master_page_closing_tag_non_greedy() {
+        assert_eq!(
+            Ok(("ity>", "actual".to_string())),
+            master_page_closing_tag("</+actual>ity>")
+        );
+    }
+
+    #[test]
+    fn master_page_closing_tag_slash() {
+        /*
+        assert_eq!(
+            Err(nom::Err::Error(nom::error::Error { input: "/tual >", code: ErrorKind::Tag })),
+            master_page_closing_tag("</+ \t ac/tual >")
+        );
+        */
+
+        assert!(master_page_closing_tag("</+ \t ac/tual >").is_err());
     }
 }
