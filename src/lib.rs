@@ -275,6 +275,17 @@ mod tests {
     }
 
     mod enveloppe_same_name {
+        /* Given opening and closing marks of the form
+         * <alpha and >alpha,
+         * checks if
+         * <a___>a
+         * is recognized as one entity, but not
+         * <a___>b
+         * while
+         * <a___<b___>b___>a
+         * is recognized as such again.
+         */
+
         use std::cell::RefCell;
         use std::rc::Rc;
         use nom::{
@@ -288,101 +299,126 @@ mod tests {
             sequence::{preceded, terminated, tuple},
         };
 
+        #[derive(Debug)]
+        #[derive(PartialEq)]
+        enum Fragment<'a> {
+            OpenMark(&'a str),
+            CloseMark,
+            Other(&'a str),
+        }
+
+        use Fragment::{OpenMark, CloseMark, Other};
+
         macro_rules! make_open_mark {
             ($name_stack:expr, $is_first:expr) => {
-                verify(
-                    preceded(tag::<&str, &str, Error<&str>>("<"), take(1u8)),
-                    |name: &str| {
-                        match name {
-                            "<" | ">" => false,
-                            nm =>  {
-                                if $is_first && ($name_stack.borrow().len() > 0) {
-                                    return false;
+                map(
+                    verify(
+                        preceded(tag::<&str, &str, Error<&str>>("<"), take(1u8)),
+                        |name: &str| {
+                            match name {
+                                "<" | ">" => false,
+                                nm =>  {
+                                    if $is_first && ($name_stack.borrow().len() > 0) {
+                                        return false;
+                                    }
+
+                                    if (!$is_first) && ($name_stack.borrow().len() < 1) {
+                                        return false;
+                                    }
+
+                                    $name_stack.borrow_mut().push(name.to_string());
+
+                                    true
                                 }
-
-                                if (!$is_first) && ($name_stack.borrow().len() < 1) {
-                                    return false;
-                                }
-
-                                $name_stack.borrow_mut().push(name.to_string());
-
-                                true
                             }
                         }
-                    }
+                    ),
+                    |name| OpenMark(name)
                 )
             }
         }
 
         macro_rules! make_close_mark {
             ($name_stack:expr, $is_last:expr) => {
-                verify(
-                    preceded(tag::<&str, &str, Error<&str>>(">"), take(1u8)),
-                    |name: &str|
-                    {
-                        match name {
-                            "<" | ">" => false,
-                            nm =>  {
-                                let mut stack_mut = $name_stack.borrow_mut();
+                map(
+                    verify(
+                        preceded(tag::<&str, &str, Error<&str>>(">"), take(1u8)),
+                        |name: &str|
+                        {
+                            match name {
+                                "<" | ">" => false,
+                                nm =>  {
+                                    let mut stack_mut = $name_stack.borrow_mut();
 
-                                // println!("Before verify on close : name={}, name_stack={:?}", nm, stack_mut);
+                                    // println!("Before verify on close : name={}, name_stack={:?}", nm, stack_mut);
 
-                                if $is_last && (stack_mut.len() != 1) {
-                                    return false;
-                                }
+                                    if $is_last && (stack_mut.len() != 1) {
+                                        return false;
+                                    }
 
-                                if (!$is_last) && (stack_mut.len() < 2) {
-                                    return false;
-                                }
+                                    if (!$is_last) && (stack_mut.len() < 2) {
+                                        return false;
+                                    }
 
-                                match stack_mut.last() {
-                                    None => false,
-                                    Some(ref last_name) => {
-                                        if nm == last_name.as_str() {
-                                            stack_mut.pop();
-                                            true
-                                        } else {
-                                            false
+                                    match stack_mut.last() {
+                                        None => false,
+                                        Some(ref last_name) => {
+                                            if nm == last_name.as_str() {
+                                                stack_mut.pop();
+                                                true
+                                            } else {
+                                                false
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
+                    ),
+                    |_| CloseMark
                 )
             }
         }
 
+        /*
+        enum NestedContent {
+            Enveloppe(Enveloppe),
+            Other(String),
+        }
+
+        struct Enveloppe {
+            name: String,
+            content: Vec<NestedContent>,
+        }
+        impl Enveloppe {
+            fn new(name: String) -> Self {
+                Enveloppe {
+                    content: Vec::new(),
+                    name,
+                }
+            }
+        }
+        */
+
         #[test]
         fn nom_open_close_same_name() {
-            /* Given opening and closing marks of the form
-             * <alpha and >alpha,
-             * checks if
-             * <a___>a
-             * is recognized as one entity, but not
-             * <a___>b
-             * while
-             * <a___<b___>b___>a
-             * is recognized as such again.
-             */
-
             let name_stack: RefCell<Vec<String>> = RefCell::new(Vec::new());
             
             let mut open_mark_first = make_open_mark!(name_stack, true);
             let mut open_mark_nested = make_open_mark!(name_stack, false);
 
-            assert_eq!(Ok(("12", "a")), open_mark_first("<a12"));
+            assert_eq!(Ok(("12", OpenMark("a"))), open_mark_first("<a12"));
 
             let mut close_mark_last = make_close_mark!(name_stack, true);
             let mut close_mark_nested = make_close_mark!(name_stack, false);
 
-            assert_eq!(Ok(("zz", "a")), close_mark_last(">azz"));
+            assert_eq!(Ok(("zz", CloseMark)), close_mark_last(">azz"));
 
             let mut enveloppe = map(
                 tuple((
                     open_mark_first,
                     many0(alt((
-                        is_not("<>"),
+                        map(is_not("<>"), |other| Fragment::Other(other)),
                         open_mark_nested,
                         close_mark_nested,
                     ))),
@@ -390,9 +426,13 @@ mod tests {
                 )),
                 |tp|
                 {
-                    let mut result = Vec::<&str>::new();
+                    let mut result = Vec::<Fragment>::new();
                     result.push(tp.0);
-                    result.extend(tp.1.iter());
+
+                    for elem in tp.1 {
+                        result.push(elem);
+                    }
+
                     result.push(tp.2);
 
                     result
@@ -401,31 +441,31 @@ mod tests {
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec!["x", "_-_-_", "x"])),
+                Ok(("", vec![OpenMark("x"), Other("_-_-_"), CloseMark])),
                 enveloppe("<x_-_-_>x")
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec!["x", "_", "x", "_", "x", "x"])),
+                Ok(("", vec![OpenMark("x"), Other("_"), OpenMark("x"), Other("_"), CloseMark, CloseMark])),
                 enveloppe("<x_<x_>x>x")
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec!["x", "x"])),
+                Ok(("", vec![OpenMark("x"), CloseMark])),
                 enveloppe("<x>x")
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec!["x", "_", "y", "-", "y", "_", "x"])),
+                Ok(("", vec![OpenMark("x"), Other("_"), OpenMark("y"), Other("-"), CloseMark, Other("_"), CloseMark])),
                 enveloppe("<x_<y->y_>x")
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("---<a--->a", vec!["x", "_", "y", "-", "y", "_", "x"])),
+                Ok(("---<a--->a", vec![OpenMark("x"), Other("_"), OpenMark("y"), Other("-"), CloseMark, Other("_"), CloseMark])),
                 enveloppe("<x_<y->y_>x---<a--->a")
             );
 
