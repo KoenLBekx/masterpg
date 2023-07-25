@@ -286,7 +286,7 @@ mod tests {
          * is recognized as such again.
          */
 
-        use std::cell::RefCell;
+        use std::cell::{Ref, RefCell};
         use std::rc::Rc;
         use nom::{
             branch::alt,
@@ -298,6 +298,10 @@ mod tests {
             multi::many0,
             sequence::{preceded, terminated, tuple},
         };
+
+        const OPEN_MARK: &str = "<";
+        const CLOSE_MARK: &str = ">";
+        const NAME_LENGTH: u8 = 1;
 
         #[derive(Debug)]
         #[derive(PartialEq)]
@@ -313,10 +317,10 @@ mod tests {
             ($name_stack:expr, $is_first:expr) => {
                 map(
                     verify(
-                        preceded(tag::<&str, &str, Error<&str>>("<"), take(1u8)),
+                        preceded(tag::<&str, &str, Error<&str>>(OPEN_MARK), take(NAME_LENGTH)),
                         |name: &str| {
                             match name {
-                                "<" | ">" => false,
+                                OPEN_MARK | CLOSE_MARK => false,
                                 nm =>  {
                                     if $is_first && ($name_stack.borrow().len() > 0) {
                                         return false;
@@ -342,11 +346,11 @@ mod tests {
             ($name_stack:expr, $is_last:expr) => {
                 map(
                     verify(
-                        preceded(tag::<&str, &str, Error<&str>>(">"), take(1u8)),
+                        preceded(tag::<&str, &str, Error<&str>>(CLOSE_MARK), take(NAME_LENGTH)),
                         |name: &str|
                         {
                             match name {
-                                "<" | ">" => false,
+                                OPEN_MARK | CLOSE_MARK => false,
                                 nm =>  {
                                     let mut stack_mut = $name_stack.borrow_mut();
 
@@ -380,37 +384,134 @@ mod tests {
             }
         }
 
-        /*
         enum NestedContent {
-            Enveloppe(Enveloppe),
+            Enveloppe(Rc<RefCell<Enveloppe>>),
             Other(String),
+        }
+        impl std::fmt::Display for NestedContent {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let result: String = match self {
+                    // NestedContent::Enveloppe(ref env_cell) => EnveloppeCellWrapper{value: Rc::clone(&env_cell)}.to_string(),
+                    NestedContent::Enveloppe(ref env_cell) => env_cell.displayable().to_string(),
+                    NestedContent::Other(ref theString) => theString.clone(),
+                };
+
+                write!(f, "{}", result)
+            }
         }
 
         struct Enveloppe {
             name: String,
-            content: Vec<NestedContent>,
+            children: Vec<NestedContent>,
+            is_open: bool,
         }
-        impl Enveloppe {
-            fn new(name: String) -> Self {
-                Enveloppe {
-                    content: Vec::new(),
-                    name,
-                }
+
+        trait EnveloppeCellFunctions {
+            fn create(name: String) -> Self;
+            fn close(&self);
+            fn add_fragment(&self, fragment: Fragment) -> Result<(), String>;
+            fn displayable(&self) -> EnveloppeCellWrapper;
+        }
+
+        // Cfr. The Rust Book, Chapter 19.2, "Using the Newtype Pattern to Implement External Traits on External Types"
+        struct EnveloppeCellWrapper {
+            value: Rc<RefCell<Enveloppe>>
+        }
+        impl std::ops::Deref for EnveloppeCellWrapper {
+            type Target = Rc<RefCell<Enveloppe>>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.value
             }
         }
-        */
+        impl std::fmt::Display for EnveloppeCellWrapper {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let enveloppe = self.value.borrow();
+                let mut result = format!(
+                    "{}{}{}{}{}",
+                    OPEN_MARK,
+                    enveloppe.name.clone(),
+                    enveloppe.children.iter().fold(String::new(), |acc, nested| {
+                        format!("{}{}", acc, nested.to_string())
+                    }),
+                    CLOSE_MARK,
+                    enveloppe.name.clone());
+
+                write!(f, "{}", result)
+            } 
+        }
+
+        impl EnveloppeCellFunctions for Rc<RefCell<Enveloppe>> {
+            fn create(name: String) -> Self {
+                Rc::new(RefCell::new(
+                    Enveloppe {
+                    children: Vec::new(),
+                    is_open: true,
+                    name,
+                }))
+            }
+
+            fn close(&self) {
+                self.borrow_mut().is_open = false;
+            }
+
+            fn displayable(&self) -> EnveloppeCellWrapper {
+                EnveloppeCellWrapper{value: Rc::clone(&self)}
+            }
+
+            fn add_fragment(&self, fragment: Fragment) -> Result<(), String> {
+                if !self.borrow().is_open {
+                   return Err(String::from("Can't add to a closed enveloppe."));
+                }
+
+                let mut last_open = Rc::clone(self);
+
+                loop {
+                    let last_open_clone: Rc<RefCell<Enveloppe>>;
+                    let last_open_env: Ref<Enveloppe>;
+                    last_open_clone = Rc::clone(&last_open);
+                    last_open_env = last_open_clone.borrow();
+
+                    let open_child = last_open_env.children.iter().find(|&nested| {
+                        match nested {
+                            NestedContent::Other(_) => false,
+                            NestedContent::Enveloppe(ref envlp) => envlp.borrow().is_open,
+                        }
+                    });
+
+                    match open_child {
+                        None => break,
+                        Some(nested) =>  {
+                            if let NestedContent::Enveloppe(ref envlp) = nested {
+                                last_open = Rc::clone(envlp);
+                            } else {
+                                panic!("Enveloppe.add_fragment: if an open enveloppe was found, a test on it being a NestedContent::Enveloppe shouldn't fail.");
+                            }
+                        }
+                    }
+                };
+
+                match fragment {
+                    OpenMark(name) => last_open.borrow_mut().children.push(NestedContent::Enveloppe(Rc::<RefCell<Enveloppe>>::create(name.to_string()))),
+                    Other(content) => last_open.borrow_mut().children.push(NestedContent::Other(content.to_string())),
+                    CloseMark => last_open.close(),
+                }
+
+                Ok(())
+            }
+        }
 
         #[test]
         fn nom_open_close_same_name() {
             let name_stack: RefCell<Vec<String>> = RefCell::new(Vec::new());
             
             let mut open_mark_first = make_open_mark!(name_stack, true);
-            let mut open_mark_nested = make_open_mark!(name_stack, false);
+            let open_mark_nested = make_open_mark!(name_stack, false);
 
             assert_eq!(Ok(("12", OpenMark("a"))), open_mark_first("<a12"));
 
             let mut close_mark_last = make_close_mark!(name_stack, true);
-            let mut close_mark_nested = make_close_mark!(name_stack, false);
+            let close_mark_nested = make_close_mark!(name_stack, false);
 
             assert_eq!(Ok(("zz", CloseMark)), close_mark_last(">azz"));
 
@@ -426,14 +527,19 @@ mod tests {
                 )),
                 |tp|
                 {
-                    let mut result = Vec::<Fragment>::new();
-                    result.push(tp.0);
+                    let result: Rc<RefCell<Enveloppe>>;
 
-                    for elem in tp.1 {
-                        result.push(elem);
+                    if let OpenMark(name) = tp.0 {
+                        result = Rc::<RefCell<Enveloppe>>::create(name.to_string());
+                    } else {
+                        panic!("The output of open_mark_first should be a Fragment::OpenMark.");
                     }
 
-                    result.push(tp.2);
+                    for fragment in tp.1 {
+                        result.add_fragment(fragment);
+                    }
+
+                    result.close();
 
                     result
                 }
@@ -441,32 +547,32 @@ mod tests {
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec![OpenMark("x"), Other("_-_-_"), CloseMark])),
-                enveloppe("<x_-_-_>x")
+                "<x_-_-_>x".to_string(),
+                enveloppe("<x_-_-_>x").unwrap().1.displayable().to_string()
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec![OpenMark("x"), Other("_"), OpenMark("x"), Other("_"), CloseMark, CloseMark])),
-                enveloppe("<x_<x_>x>x")
+                "<x_<x_>x>x".to_string(),
+                enveloppe("<x_<x_>x>x").unwrap().1.displayable().to_string()
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec![OpenMark("x"), CloseMark])),
-                enveloppe("<x>x")
+                "<x>x".to_string(),
+                enveloppe("<x>x").unwrap().1.displayable().to_string()
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("", vec![OpenMark("x"), Other("_"), OpenMark("y"), Other("-"), CloseMark, Other("_"), CloseMark])),
-                enveloppe("<x_<y->y_>x")
+                "<x_<y->y_>x".to_string(),
+                enveloppe("<x_<y->y_>x").unwrap().1.displayable().to_string()
             );
 
             name_stack.borrow_mut().clear();
             assert_eq!(
-                Ok(("---<a--->a", vec![OpenMark("x"), Other("_"), OpenMark("y"), Other("-"), CloseMark, Other("_"), CloseMark])),
-                enveloppe("<x_<y->y_>x---<a--->a")
+                "<x_<y->y_>x".to_string(),
+                enveloppe("<x_<y->y_>x---<a--->a").unwrap().1.displayable().to_string()
             );
 
             name_stack.borrow_mut().clear();
