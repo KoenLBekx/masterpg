@@ -411,6 +411,7 @@ mod tests {
             fn close(&self);
             fn add_fragment(&self, fragment: Fragment) -> Result<(), String>;
             fn displayable(&self) -> EnveloppeCellWrapper;
+            fn replace_enveloppe_having_name_with_other(&self, env_name: &str, other_content: String) -> usize;
         }
 
         // Cfr. The Rust Book, Chapter 19.2, "Using the Newtype Pattern to Implement External Traits on External Types"
@@ -499,6 +500,30 @@ mod tests {
 
                 Ok(())
             }
+
+            fn replace_enveloppe_having_name_with_other(&self, env_name: &str, other_content: String) -> usize {
+                let mut replaced: usize = 0;
+                let mut self_env = self.borrow_mut();
+
+                for i in 0..self_env.children.len() {
+                    replaced += match self_env.children[i] {
+                        NestedContent::Other(_) => 0,
+                        NestedContent::Enveloppe(ref nested_cell) => {
+                            if nested_cell.borrow().name == env_name {
+                                self_env.children[i] = NestedContent::Other(other_content.clone());
+
+                                1
+                            } else {
+                                let nested_env = Rc::clone(nested_cell);
+
+                                nested_env.replace_enveloppe_having_name_with_other(env_name, other_content.clone())
+                            }
+                        },
+                    }
+                }
+
+                replaced
+            }
         }
 
         #[test]
@@ -546,10 +571,15 @@ mod tests {
             );
 
             name_stack.borrow_mut().clear();
-            assert_eq!(
-                "<x_-_-_>x".to_string(),
-                enveloppe("<x_-_-_>x").unwrap().1.displayable().to_string()
-            );
+            let found_enveloppe = enveloppe("<x_-_-_>x").unwrap().1;
+
+            // Ensure we can do .to_string() twice (so it's non-consuming).
+            for _i in 0..2 {
+                assert_eq!(
+                    "<x_-_-_>x".to_string(),
+                    found_enveloppe.displayable().to_string()
+                );
+            }
 
             name_stack.borrow_mut().clear();
             assert_eq!(
@@ -601,6 +631,51 @@ mod tests {
 
             name_stack.borrow_mut().clear();
             assert!(enveloppe("<x__<z__>x__>z").is_err());
+
+            name_stack.borrow_mut().clear();
+            let env_cell = enveloppe("<a___>a").unwrap().1;
+            let r = env_cell.replace_enveloppe_having_name_with_other("b", "replaced".to_string());
+            assert_eq!(0usize, r);
+            assert_eq!(
+                "<a___>a".to_string(),
+                env_cell.displayable().to_string()
+            );
+
+            name_stack.borrow_mut().clear();
+            let env_cell = enveloppe("<a<b>b>a").unwrap().1;
+            let r = env_cell.replace_enveloppe_having_name_with_other("b", "replaced".to_string());
+            assert_eq!(1usize, r);
+            assert_eq!(
+                "<areplaced>a".to_string(),
+                env_cell.displayable().to_string()
+            );
+
+            name_stack.borrow_mut().clear();
+            let env_cell = enveloppe("<a_<b_>b_<c_<b_>b_>c_>a").unwrap().1;
+            let r = env_cell.replace_enveloppe_having_name_with_other("b", "!".to_string());
+            assert_eq!(2usize, r);
+            assert_eq!(
+                "<a_!_<c_!_>c_>a".to_string(),
+                env_cell.displayable().to_string()
+            );
+
+            name_stack.borrow_mut().clear();
+            let env_cell = enveloppe("<a_<b_>b_<c_<b_<b_>b_>b_>c_>a").unwrap().1;
+            let r = env_cell.replace_enveloppe_having_name_with_other("b", "!".to_string());
+            assert_eq!(2usize, r);
+            assert_eq!(
+                "<a_!_<c_!_>c_>a".to_string(),
+                env_cell.displayable().to_string()
+            );
+
+            name_stack.borrow_mut().clear();
+            let env_cell = enveloppe("<a_<b_>b_<c_<b_>b_>c_>a").unwrap().1;
+            let r = env_cell.replace_enveloppe_having_name_with_other("z", "!".to_string());
+            assert_eq!(0usize, r);
+            assert_eq!(
+                "<a_<b_>b_<c_<b_>b_>c_>a".to_string(),
+                env_cell.displayable().to_string()
+            );
         }
     }
 }
