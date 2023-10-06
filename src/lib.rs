@@ -3,7 +3,7 @@ use nom::{
     branch::alt,
     bytes::complete::{is_a, is_not, tag, take},
     character::complete::char,
-    combinator::{map, opt, peek, recognize},
+    combinator::{map, opt, peek, recognize, verify},
     Err,
     error::{Error, ErrorKind},
     IResult,
@@ -96,6 +96,14 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
     )(input)
 }
 
+fn master_page_tag_opening_children(input: &str) -> IResult<&str, Vec<String>> {
+    master_page_tag_opening_content(input, false)
+}
+
+fn master_page_tag_opening_self_contained(input: &str) -> IResult<&str, Vec<String>> {
+    master_page_tag_opening_content(input, true)
+}
+
 fn master_page_closing_tag(input: &str) -> IResult<&str, String> {
     map(
         delimited(
@@ -108,9 +116,33 @@ fn master_page_closing_tag(input: &str) -> IResult<&str, String> {
 }
 
 /*
-fn master_page_opening_closing_tag(input: &str) -> IResult<&str, (Vec<String>,  String)> {
-    pair(
+fn master_page_opening_closing_tag(input: &str) -> IResult<&str, (Vec<String>,  Vec<String>)> {
+    let tag_name: String;
+
+    terminated(
+        pair(
+            verify(
+                master_page_tag_opening_children,
+                |contents: &Vec<String>| {tag_name == contents[0]; true}
+            ),
+            many0(
+                children_content
+            )),
+        verify(
+            master_page_closing_tag,
+            |tname| tname == tag_name
+        )
     )(input)
+}
+
+fn children_content(input: &str) -> IResult<&str, (Vec<String>,  String)> {
+    many0(
+        alt((
+            is_a(" \t\n\r"),
+            is_not(" \t\n\r><"),
+            master_page_opening_closing_tag
+        ))
+    )
 }
 */
 
