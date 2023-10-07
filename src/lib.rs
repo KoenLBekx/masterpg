@@ -24,17 +24,22 @@ struct Calculation {
     operand2: Operand,
 }
 
-enum MasterPageTag {
+enum NestedPageContent {
     Comment,
     Output(String),
     Master(String),
-    Actual(Vec<PageContent>),
-    Calc(Calculation),
+    Actual(String, Vec<NestedPageContent>),
+    Calc(String, Calculation),
     PlaceHolder(String),
+    Other(String),
 }
 
-enum PageContent {
-    MPTag(MasterPageTag),
+#[derive(PartialEq)]
+#[derive(Debug)]
+enum FlatPageContent {
+    SelfContainedMPTag(Vec<String>),
+    OpeningMPTag(Vec<String>),
+    ClosingMPTag(String),
     Other(String),
 }
 
@@ -96,55 +101,52 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
     )(input)
 }
 
-fn master_page_tag_opening_children(input: &str) -> IResult<&str, Vec<String>> {
-    master_page_tag_opening_content(input, false)
+fn master_page_tag_opening_children(input: &str) -> IResult<&str, FlatPageContent> {
+    match master_page_tag_opening_content(input, false) {
+        Err(err) => Err(err),
+        Ok((rest, tagStrings)) => Ok((rest, FlatPageContent::OpeningMPTag(tagStrings))),
+    }
 }
 
-fn master_page_tag_opening_self_contained(input: &str) -> IResult<&str, Vec<String>> {
-    master_page_tag_opening_content(input, true)
+fn master_page_tag_self_contained(input: &str) -> IResult<&str, FlatPageContent> {
+    match master_page_tag_opening_content(input, true) {
+        Err(err) => Err(err),
+        Ok((rest, tagStrings)) => Ok((rest, FlatPageContent::SelfContainedMPTag(tagStrings))),
+    }
 }
 
-fn master_page_closing_tag(input: &str) -> IResult<&str, String> {
+fn master_page_closing_tag(input: &str) -> IResult<&str, FlatPageContent> {
     map(
         delimited(
             terminated(tag("</+"), opt(whitespace)),
             is_not(" \t\n\r/><"),
             preceded(opt(whitespace), tag(">"))
         ),
-        |found| String::from(found)
+        |found| FlatPageContent::ClosingMPTag(String::from(found))
     )(input)
 }
 
-/*
-fn master_page_opening_closing_tag(input: &str) -> IResult<&str, (Vec<String>,  Vec<String>)> {
-    let tag_name: String;
+fn other_flat_content(input: &str) -> IResult<&str, FlatPageContent> {
+    map(
+        many1(
+            alt((
+                is_not("<"),
+                terminated(tag("<"), peek(is_not("+"))),
+                terminated(tag("</"), peek(is_not("+"))),
+            ))
+        ),
+        |list: Vec<&str>|
+        {
+            let mut result_str = String::new();
 
-    terminated(
-        pair(
-            verify(
-                master_page_tag_opening_children,
-                |contents: &Vec<String>| {tag_name == contents[0]; true}
-            ),
-            many0(
-                children_content
-            )),
-        verify(
-            master_page_closing_tag,
-            |tname| tname == tag_name
-        )
+            for elem in list {
+                result_str.push_str(elem);
+            }
+
+            FlatPageContent::Other(result_str)
+        }
     )(input)
 }
-
-fn children_content(input: &str) -> IResult<&str, (Vec<String>,  String)> {
-    many0(
-        alt((
-            is_a(" \t\n\r"),
-            is_not(" \t\n\r><"),
-            master_page_opening_closing_tag
-        ))
-    )
-}
-*/
 
 pub fn compose<Tioh>(file_path:&OsStr, io_handler:Tioh) -> Result<(), Box<dyn std::error::Error>>
 where Tioh: TextIOHandler {
@@ -265,7 +267,7 @@ mod tests {
     #[test]
     fn master_page_closing_tag_no_spaces() {
         assert_eq!(
-            Ok(("", "actual".to_string())),
+            Ok(("", FlatPageContent::ClosingMPTag("actual".to_string()))),
             master_page_closing_tag("</+actual>")
         );
     }
@@ -273,7 +275,7 @@ mod tests {
     #[test]
     fn master_page_closing_tag_spaces() {
         assert_eq!(
-            Ok(("", "actual".to_string())),
+            Ok(("", FlatPageContent::ClosingMPTag("actual".to_string()))),
             master_page_closing_tag("</+ \t actual >")
         );
     }
@@ -281,7 +283,7 @@ mod tests {
     #[test]
     fn master_page_closing_tag_text_after() {
         assert_eq!(
-            Ok(("Hello everybody, ...", "actual".to_string())),
+            Ok(("Hello everybody, ...", FlatPageContent::ClosingMPTag("actual".to_string()))),
             master_page_closing_tag("</+ \t actual >Hello everybody, ...")
         );
     }
@@ -289,7 +291,7 @@ mod tests {
     #[test]
     fn master_page_closing_tag_non_greedy() {
         assert_eq!(
-            Ok(("ity>", "actual".to_string())),
+            Ok(("ity>", FlatPageContent::ClosingMPTag("actual".to_string()))),
             master_page_closing_tag("</+actual>ity>")
         );
     }
@@ -304,6 +306,110 @@ mod tests {
         */
 
         assert!(master_page_closing_tag("</+ \t ac/tual >").is_err());
+    }
+
+    #[test]
+    fn mpt_opening_children_fails_on_no_tag() {
+        let result = master_page_tag_opening_children("abc def ghi blabla");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_opening_children_fails_on_html_tag() {
+        let result = master_page_tag_opening_children("<abc def ghi>blabla</abc>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_opening_children_fails_on_unclosed() {
+        let result = master_page_tag_opening_children("<+abc def ghi blabla");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_opening_children_fails_on_self_contained() {
+        let result = master_page_tag_opening_children("<+abc def ghi/>blabla");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_opening_children() {
+        let result = master_page_tag_opening_children("<+abc def ghi>blabla</+abc>");
+        assert!(result.is_ok());
+        assert_eq!(Ok(("blabla</+abc>", FlatPageContent::OpeningMPTag(vec!["abc".to_string(), "def".to_string(), "ghi".to_string()]))), result);
+    }
+
+    #[test]
+    fn mpt_self_contained_fails_on_no_tag() {
+        let result = master_page_tag_self_contained("abc def ghi blabla");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_self_contained_fails_on_html_tag() {
+        let result = master_page_tag_self_contained("<abc def ghi/>blabla");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_self_contained_fails_on_unclosed() {
+        let result = master_page_tag_self_contained("<+abc def ghi blabla");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_self_contained_fails_on_opening() {
+        let result = master_page_tag_self_contained("<+abc def ghi>blabla</+abc>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_self_contained() {
+        let result = master_page_tag_self_contained("<+abc / def ghi/>blabla");
+        assert!(result.is_ok());
+        assert_eq!(Ok(("blabla", FlatPageContent::SelfContainedMPTag(vec!["abc".to_string(), "/".to_string(), "def".to_string(), "ghi".to_string()]))), result);
+    }
+
+    #[test]
+    fn mpt_other_empty() {
+        let result = other_flat_content("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mpt_other_no_tags() {
+        let result = other_flat_content("I spied Willy McIntosh an hour before the dawning");
+        assert!(result.is_ok());
+
+        assert_eq!(
+            Ok(("", FlatPageContent::Other("I spied Willy McIntosh an hour before the dawning".to_string()))),
+            result
+        );
+    }
+
+    #[test]
+    fn mpt_other_only_html_tags() {
+        let result = other_flat_content("<div class=\"verse\">As I came down by Fiddichside</div>");
+        assert!(result.is_ok());
+
+        assert_eq!(
+            Ok(("", FlatPageContent::Other("<div class=\"verse\">As I came down by Fiddichside</div>".to_string()))),
+            result
+        );
+    }
+
+    #[test]
+    fn mpt_other_followed_by_master_page_tag() {
+        let result = other_flat_content("<div class=\"verse\">As I came down by Fiddichside</div><+placeholder menu/>");
+        assert!(result.is_ok());
+
+        assert_eq!(
+            Ok((
+                "<+placeholder menu/>",
+                FlatPageContent::Other("<div class=\"verse\">As I came down by Fiddichside</div>".to_string())
+            )),
+            result
+        );
     }
 
     mod enveloppe_same_name {
@@ -365,7 +471,7 @@ mod tests {
                                     $name_stack.borrow_mut().push(name.to_string());
 
                                     true
-                                }
+                                },
                             }
                         }
                     ),
