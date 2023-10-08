@@ -153,15 +153,31 @@ fn other_flat_content(input: &str) -> IResult<&str, FlatPageContent> {
     )(input)
 }
 
-fn read_flat_content(input: &str) -> IResult<&str, Vec<FlatPageContent>> {
-    many0(
+fn read_flat_content(input: &str) -> Result<Vec<FlatPageContent>, String> {
+    let input_len = input.len();
+
+    let nom_result = many0(
         alt((
             other_flat_content,
             master_page_tag_self_contained,
             master_page_tag_opening_children,
             master_page_closing_tag,
         ))
-    )(input)
+    )(input);
+
+    match nom_result {
+        Err(_) => Err("Malformed input string.".to_string()),
+        Ok((rest, contents)) =>  {
+            match rest.len() {
+                0 => Ok(contents),
+                rest_len =>  {
+                    let err_start = input_len - rest_len + 1;
+                    
+                    Err(format!("The master page tag starting around character {} is malformed.", err_start))
+                },
+            }
+        },
+    }
 }
 
 pub fn compose<Tioh>(file_path:&OsStr, io_handler:Tioh) -> Result<(), Box<dyn std::error::Error>>
@@ -446,7 +462,7 @@ mod tests {
     fn read_flat_content_empty() {
         let result = read_flat_content("");
         assert!(result.is_ok());
-        assert_eq!(Ok(("", Vec::<FlatPageContent>::new())), result);
+        assert_eq!(Ok(Vec::<FlatPageContent>::new()), result);
     }
 
     #[test]
@@ -454,19 +470,29 @@ mod tests {
         let test_content = "<!doctype html><html><head></head><body><h1>Test page</h1></body></html>";
         let result = read_flat_content(test_content.clone());
         assert!(result.is_ok());
-        let (rest, contents) = result.unwrap();
-        assert_eq!(0, rest.len());
+        let contents = result.unwrap();
         assert_eq!(vec![FlatPageContent::Other(test_content.to_string())], contents);
     }
 
     #[test]
     fn read_flat_content_mixed() {
-        let test_content = "<+master general.mpm/><+output testPage.htm/><!doctype html><html><head></head><+actual body><body><h1>Test page</h1></body></+actual><+placeholder body/></html>";
+        let test_content_string = "
+<+master general.mpm/>
+<+output testPage.htm/>
+<!doctype html><html><head></head>
+<+actual body>
+<body><h1>Test page</h1></body>
+</+actual>
+<+placeholder body/>
+</html>"
+.replace("\n", "");
+
+        let test_content = test_content_string.as_str();
+
         let result = read_flat_content(test_content.clone());
         assert!(result.is_ok());
-        let (rest, contents) = result.unwrap();
-        assert_eq!(0, rest.len());
-        // assert_eq!(8, contents.len());
+        let contents = result.unwrap();
+        assert_eq!(8, contents.len());
 
         assert_eq!(
             vec![
@@ -480,6 +506,35 @@ mod tests {
                 FlatPageContent::Other("</html>".to_string())
             ],
             contents
+        );
+    }
+
+    #[test]
+    fn read_flat_content_malformed() {
+        let test_content_string = "
+<+master general.mpm/>
+<+output testPage.htm/>
+<!doctype html><html><head></head>
+<+actual body>
+<body><h1>Test page</h1></body>
+</+actual>
+<+placeholder body/
+</html>"
+.replace("\n", "");
+
+        let test_content = test_content_string.as_str();
+
+        let result = read_flat_content(test_content.clone());
+        assert!(result.is_err());
+
+        // Debug
+        // println!("{}", result.unwrap_err());
+
+        let error_text = result.unwrap_err();
+
+        assert_eq!(
+            "The master page tag starting around character 135 is malformed.".to_string(),
+            error_text
         );
     }
 
@@ -530,7 +585,7 @@ mod tests {
                         |name: &str| {
                             match name {
                                 OPEN_MARK | CLOSE_MARK => false,
-                                nm =>  {
+                                _nm =>  {
                                     if $is_first && ($name_stack.borrow().len() > 0) {
                                         return false;
                                     }
@@ -602,7 +657,7 @@ mod tests {
                 let result: String = match self {
                     // NestedContent::Enveloppe(ref env_cell) => EnveloppeCellWrapper{value: Rc::clone(&env_cell)}.to_string(),
                     NestedContent::Enveloppe(ref env_cell) => env_cell.displayable().to_string(),
-                    NestedContent::Other(ref theString) => theString.clone(),
+                    NestedContent::Other(ref the_string) => the_string.clone(),
                 };
 
                 write!(f, "{}", result)
@@ -637,7 +692,7 @@ mod tests {
         impl std::fmt::Display for EnveloppeCellWrapper {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 let enveloppe = self.value.borrow();
-                let mut result = format!(
+                let result = format!(
                     "{}{}{}{}{}",
                     OPEN_MARK,
                     enveloppe.name.clone(),
@@ -770,7 +825,7 @@ mod tests {
                     }
 
                     for fragment in tp.1 {
-                        result.add_fragment(fragment);
+                        result.add_fragment(fragment).unwrap();
                     }
 
                     result.close();
