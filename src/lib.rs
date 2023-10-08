@@ -104,14 +104,14 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
 fn master_page_tag_opening_children(input: &str) -> IResult<&str, FlatPageContent> {
     match master_page_tag_opening_content(input, false) {
         Err(err) => Err(err),
-        Ok((rest, tagStrings)) => Ok((rest, FlatPageContent::OpeningMPTag(tagStrings))),
+        Ok((rest, tag_strings)) => Ok((rest, FlatPageContent::OpeningMPTag(tag_strings))),
     }
 }
 
 fn master_page_tag_self_contained(input: &str) -> IResult<&str, FlatPageContent> {
     match master_page_tag_opening_content(input, true) {
         Err(err) => Err(err),
-        Ok((rest, tagStrings)) => Ok((rest, FlatPageContent::SelfContainedMPTag(tagStrings))),
+        Ok((rest, tag_strings)) => Ok((rest, FlatPageContent::SelfContainedMPTag(tag_strings))),
     }
 }
 
@@ -131,8 +131,13 @@ fn other_flat_content(input: &str) -> IResult<&str, FlatPageContent> {
         many1(
             alt((
                 is_not("<"),
-                terminated(tag("<"), peek(is_not("+"))),
-                terminated(tag("</"), peek(is_not("+"))),
+                terminated(
+                    alt((
+                        terminated(tag("<"), peek(is_not("/"))),
+                        tag("</")
+                    )),
+                    peek(is_not("+"))
+                ),
             ))
         ),
         |list: Vec<&str>|
@@ -145,6 +150,17 @@ fn other_flat_content(input: &str) -> IResult<&str, FlatPageContent> {
 
             FlatPageContent::Other(result_str)
         }
+    )(input)
+}
+
+fn read_flat_content(input: &str) -> IResult<&str, Vec<FlatPageContent>> {
+    many0(
+        alt((
+            other_flat_content,
+            master_page_tag_self_contained,
+            master_page_tag_opening_children,
+            master_page_closing_tag,
+        ))
     )(input)
 }
 
@@ -399,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn mpt_other_followed_by_master_page_tag() {
+    fn mpt_other_followed_by_self_contained_master_page_tag() {
         let result = other_flat_content("<div class=\"verse\">As I came down by Fiddichside</div><+placeholder menu/>");
         assert!(result.is_ok());
 
@@ -409,6 +425,61 @@ mod tests {
                 FlatPageContent::Other("<div class=\"verse\">As I came down by Fiddichside</div>".to_string())
             )),
             result
+        );
+    }
+
+    #[test]
+    fn mpt_other_followed_by_closing_master_page_tag() {
+        let result = other_flat_content("<div class=\"verse\">As I came down by Fiddichside</div></+actual>");
+        assert!(result.is_ok());
+
+        assert_eq!(
+            Ok((
+                "</+actual>",
+                FlatPageContent::Other("<div class=\"verse\">As I came down by Fiddichside</div>".to_string())
+            )),
+            result
+        );
+    }
+
+    #[test]
+    fn read_flat_content_empty() {
+        let result = read_flat_content("");
+        assert!(result.is_ok());
+        assert_eq!(Ok(("", Vec::<FlatPageContent>::new())), result);
+    }
+
+    #[test]
+    fn read_flat_content_only_other() {
+        let test_content = "<!doctype html><html><head></head><body><h1>Test page</h1></body></html>";
+        let result = read_flat_content(test_content.clone());
+        assert!(result.is_ok());
+        let (rest, contents) = result.unwrap();
+        assert_eq!(0, rest.len());
+        assert_eq!(vec![FlatPageContent::Other(test_content.to_string())], contents);
+    }
+
+    #[test]
+    fn read_flat_content_mixed() {
+        let test_content = "<+master general.mpm/><+output testPage.htm/><!doctype html><html><head></head><+actual body><body><h1>Test page</h1></body></+actual><+placeholder body/></html>";
+        let result = read_flat_content(test_content.clone());
+        assert!(result.is_ok());
+        let (rest, contents) = result.unwrap();
+        assert_eq!(0, rest.len());
+        // assert_eq!(8, contents.len());
+
+        assert_eq!(
+            vec![
+                FlatPageContent::SelfContainedMPTag(vec!["master".to_string(), "general.mpm".to_string()]),
+                FlatPageContent::SelfContainedMPTag(vec!["output".to_string(), "testPage.htm".to_string()]),
+                FlatPageContent::Other("<!doctype html><html><head></head>".to_string()),
+                FlatPageContent::OpeningMPTag(vec!["actual".to_string(), "body".to_string()]),
+                FlatPageContent::Other("<body><h1>Test page</h1></body>".to_string()),
+                FlatPageContent::ClosingMPTag("actual".to_string()),
+                FlatPageContent::SelfContainedMPTag(vec!["placeholder".to_string(), "body".to_string()]),
+                FlatPageContent::Other("</html>".to_string())
+            ],
+            contents
         );
     }
 
