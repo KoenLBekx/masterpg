@@ -160,6 +160,7 @@ version = "0.1.0"
 dependencies = [
  "nom",
  "string_io_and_mock",
+ "tree_by_path",
 ]
 
 [[package]]
@@ -316,6 +317,10 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "tree_by_path"
+version = "0.1.0"
 
 [[package]]
 name = "unicode-ident"

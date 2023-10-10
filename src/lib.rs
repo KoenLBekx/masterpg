@@ -1,4 +1,7 @@
+// TODO : unit tests on read_nested_content().
+
 use std::ffi::OsStr;
+use std::mem::discriminant;
 use nom::{
     branch::alt,
     bytes::complete::{is_a, is_not, tag, take},
@@ -12,24 +15,31 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated}
 };
 use string_io_and_mock::TextIOHandler;
+use tree_by_path::Node;
 
+#[derive(PartialEq)]
+#[derive(Debug)]
 enum Operand {
     PlaceHolder(String),
     Value(f64),
 }
 
+#[derive(PartialEq)]
+#[derive(Debug)]
 struct Calculation {
     operator: String,
     operand1: Operand,
     operand2: Operand,
 }
 
+#[derive(PartialEq)]
+#[derive(Debug)]
 enum NestedPageContent {
-    Comment,
+    Main,
     Output(String),
     Master(String),
-    Actual(String, Vec<NestedPageContent>),
-    Calc(String, Calculation),
+    Actual(String),
+    Calc(Calculation),
     PlaceHolder(String),
     Other(String),
 }
@@ -175,6 +185,72 @@ fn read_flat_content(input: &str) -> Result<Vec<FlatPageContent>, String> {
                     
                     Err(format!("The master page tag starting around character {} is malformed.", err_start))
                 },
+            }
+        },
+    }
+}
+
+fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
+    match read_flat_content(input) {
+        Err(err) => Err(err),
+        Ok(flat_contents) => {
+            let mut root = Node::new(NestedPageContent::Main);
+            let mut path = root.get_first_path();
+
+            for flat_content in flat_contents {
+                match flat_content {
+                    FlatPageContent::Other(text) => {
+                        root.add_cargo_under(&path, NestedPageContent::Other(text)).unwrap();
+                    },
+                    FlatPageContent::SelfContainedMPTag(words) => {
+                        let new_cargo: NestedPageContent;
+
+                        match words[0].as_str() {
+                            "output" => new_cargo = NestedPageContent::Output(words[1].clone()),
+                            "master" => new_cargo = NestedPageContent::Master(words[1].clone()),
+                            "placeholder" => new_cargo = NestedPageContent::PlaceHolder(words[1].clone()),
+                            // TODO "calc" => new_cargo = NestedPageContent::Calc(),
+                            "actual" => return Err("An <+actual ...>...</+actual> tag should have children, and shouldn't be self-contained like <+actual .../>.".to_string()),
+                            &_ => return Err("Unknown masterpage tag found.".to_string()),
+                        }
+
+                        root.add_cargo_under(&path, new_cargo).unwrap();
+                    },
+                    FlatPageContent::OpeningMPTag(words) => {
+                        let new_cargo: NestedPageContent;
+
+                        match words[0].as_str() {
+                            "actual" => new_cargo = NestedPageContent::Actual(words[1].clone()),
+                            _ => return Err("Invalid non self-contained masterpage tag found.".to_string()),
+                        }
+
+                        path = root.add_cargo_under(&path, new_cargo).unwrap();
+                    },
+                    FlatPageContent::ClosingMPTag(word) => {
+                        // Check if the the parent NestedPageContent is the same variant.
+                        let expected_variant = match word.as_str() {
+                            "actual" => NestedPageContent::Actual("dummy".to_string()),
+                            _ => return Err("Invalid or unknown closing masterpage tag found.".to_string()),
+                        };
+
+                        let mut parent_path = path.clone();
+                        parent_path.pop();
+                        let parent = root.borrow_cargo(&parent_path).unwrap();
+
+                        if discriminant(&expected_variant) != discriminant(parent) {
+                            return Err("Incorrectly paired opening and closing masterpage tags found.".to_string());
+                        }
+
+                        path = parent_path;
+                    },
+                }
+            }
+
+            // The path should again point to the main content node.
+            if &NestedPageContent::Main != root.borrow_cargo(&path).unwrap() {
+                Err("Unclosed masterpage tag found.".to_string())
+            } else {
+                Ok(root)
             }
         },
     }
