@@ -1,5 +1,3 @@
-// TODO : unit tests on read_nested_content().
-
 use std::ffi::OsStr;
 use std::mem::discriminant;
 use nom::{
@@ -42,6 +40,22 @@ enum NestedPageContent {
     Calc(Calculation),
     PlaceHolder(String),
     Other(String),
+}
+
+impl std::fmt::Display for NestedPageContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let output = match self {
+            NestedPageContent::Main => "Main".to_string(),
+            NestedPageContent::Output(word) => format!("Output({word})"),
+            NestedPageContent::Master(word) => format!("Master({word})"),
+            NestedPageContent::Actual(word) => format!("Actual({word})"),
+            NestedPageContent::PlaceHolder(word) => format!("PlaceHolder({word})"),
+            NestedPageContent::Other(_) => "Other".to_string(),
+            NestedPageContent::Calc(_) => "Calc".to_string(),
+        };
+
+        write!(f, "{}", output)
+    }
 }
 
 #[derive(PartialEq)]
@@ -194,10 +208,25 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
     match read_flat_content(input) {
         Err(err) => Err(err),
         Ok(flat_contents) => {
+
+            /*
+            #[cfg(test)]
+            println!("{:#?}", &flat_contents);
+            */
+
             let mut root = Node::new(NestedPageContent::Main);
             let mut path = root.get_first_path();
 
             for flat_content in flat_contents {
+
+                /*
+                #[cfg(test)]
+                {
+                    println!("----------------------------------------");
+                    println!("{:#?}", &root);
+                }
+                */
+
                 match flat_content {
                     FlatPageContent::Other(text) => {
                         root.add_cargo_under(&path, NestedPageContent::Other(text)).unwrap();
@@ -233,15 +262,18 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
                             _ => return Err("Invalid or unknown closing masterpage tag found.".to_string()),
                         };
 
-                        let mut parent_path = path.clone();
-                        parent_path.pop();
-                        let parent = root.borrow_cargo(&parent_path).unwrap();
+                        let parent = root.borrow_cargo(&path).unwrap();
+
+                        /*
+                        #[cfg(test)]
+                        println!("========== Parent node's cargo : {:?}", &parent);
+                        */
 
                         if discriminant(&expected_variant) != discriminant(parent) {
                             return Err("Incorrectly paired opening and closing masterpage tags found.".to_string());
                         }
 
-                        path = parent_path;
+                        path.pop();
                     },
                 }
             }
@@ -266,6 +298,7 @@ where Tioh: TextIOHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tree_by_path::Node;
 
     #[test]
     fn master_page_tag_self_contained_empty() {
@@ -612,6 +645,141 @@ mod tests {
             "The master page tag starting around character 135 is malformed.".to_string(),
             error_text
         );
+    }
+
+    #[test]
+    fn read_nested_content_empty() {
+        let result = read_nested_content("");
+
+        assert!(result.is_ok());
+        assert_eq!(Node::new(NestedPageContent::Main), result.unwrap());
+    }
+
+    #[test]
+    fn read_nested_content_mixed() {
+        let test_content = "
+<+output out.htm/>
+<+master boilerplate.mpm/>
+<+actual title>Introduction</+actual>
+<+actual body>
+Welcome to my site about <+placeholder title/>!
+</+actual>
+".replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_ok());
+
+        let mut root = result.unwrap();
+
+        let mut repr = root.traverse(
+            (String::new(), 0usize), 
+            |accum, crg, path|{
+                let path_len = path.len();
+
+                if path_len < accum.1 {
+                    (*accum).0.push_str("]");
+                }
+
+                if path_len > 0 {
+                    if path[path_len - 1] > 0 {
+                        (*accum).0.push_str(" ");
+                    } else {
+                        (*accum).0.push_str("[");
+                    }
+                }
+
+                (*accum).0.push_str(&crg.to_string());
+                (*accum).1 = path_len;
+
+                true
+            }
+        );
+
+        repr.0.push_str("]");
+
+        assert_eq!(
+            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other] Actual(body)[Other PlaceHolder(title) Other]".to_string(),
+            repr.0
+        );
+    }
+
+    #[test]
+    fn read_nested_content_self_contained_actual() {
+        let test_content = "
+<+output out.htm/>
+<+master boilerplate.mpm/>
+<+actual title/>Introduction</+actual>
+".replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_nested_content_self_contained_unknown() {
+
+        let test_content = "
+<+output out.htm/>
+<+master boilerplate.mpm/>
+<+unknown title/>
+".replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_nested_content_opening_unknown() {
+
+        let test_content = "
+<+output out.htm/>
+<+master boilerplate.mpm/>
+<+unknown title>Introduction</+unknown>
+".replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_nested_content_mismatched_closing() {
+
+        let test_content = "
+<+output out.htm/>
+<+master boilerplate.mpm/>
+<+actual title>Introduction</+master>
+".replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_nested_content_redundant_closing() {
+
+        let test_content = "
+<+output out.htm/>
+<+master boilerplate.mpm/>
+<+actual title>Introduction</+actual>
+Some content
+</+actual>
+".replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_nested_content_unclosed_actual() {
+
+        let test_content = "
+<+output out.htm/>
+<+actual title>Introduction
+<+master boilerplate.mpm/>
+".replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_err());
     }
 
     mod enveloppe_same_name {
