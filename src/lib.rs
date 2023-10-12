@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::mem::discriminant;
+use std::str::FromStr;
 use nom::{
     branch::alt,
     bytes::complete::{is_a, is_not, tag, take},
@@ -20,6 +21,16 @@ use tree_by_path::Node;
 enum Operand {
     PlaceHolder(String),
     Value(f64),
+}
+impl Operand {
+    pub fn new(source: &str) -> Self {
+        let parse_result = f64::from_str(source.replace(",", ".").as_str());
+
+        match parse_result {
+            Ok(num) => Operand::Value(num),
+            Err(_) => Operand::PlaceHolder(source.to_string()),
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -780,6 +791,46 @@ Some content
 
         let result = read_nested_content(test_content.as_str());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn operand_new_int() {
+        let source = "17";
+        let opd = Operand::new(source);
+
+        assert_eq!(Operand::Value(17f64), opd);
+    }
+
+    #[test]
+    fn operand_new_negative() {
+        let source = "-104";
+        let opd = Operand::new(source);
+
+        assert_eq!(Operand::Value(-104f64), opd);
+    }
+
+    #[test]
+    fn operand_new_fractal() {
+        let source = "4.999";
+        let opd = Operand::new(source);
+
+        assert_eq!(Operand::Value(4.999f64), opd);
+    }
+
+    #[test]
+    fn operand_new_comma() {
+        let source = "-43,4";
+        let opd = Operand::new(source);
+
+        assert_eq!(Operand::Value(-43.4f64), opd);
+    }
+
+    #[test]
+    fn operand_new_placeholder() {
+        let source = "text_width";
+        let opd = Operand::new(source);
+
+        assert_eq!(Operand::PlaceHolder("text_width".to_string()), opd);
     }
 
     mod enveloppe_same_name {
