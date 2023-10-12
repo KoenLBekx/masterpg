@@ -1,3 +1,5 @@
+// TODO : write unit tests on fn resolve_masters_in_tree.
+
 use std::ffi::OsStr;
 use std::mem::discriminant;
 use std::str::FromStr;
@@ -23,7 +25,7 @@ enum Operand {
     Value(f64),
 }
 impl Operand {
-    pub fn new(source: &str) -> Self {
+    pub fn new(source: String) -> Self {
         let parse_result = f64::from_str(source.replace(",", ".").as_str());
 
         match parse_result {
@@ -36,9 +38,20 @@ impl Operand {
 #[derive(PartialEq)]
 #[derive(Debug)]
 struct Calculation {
+    name: String,
     operator: String,
     operand1: Operand,
     operand2: Operand,
+}
+impl Calculation {
+    fn new(name: String, operator: String, operand1: String, operand2: String) -> Self {
+        Calculation {
+            name: name.to_string(),
+            operator: operator.to_string(),
+            operand1: Operand::new(operand1),
+            operand2: Operand::new(operand2),
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -51,6 +64,41 @@ enum NestedPageContent {
     Calc(Calculation),
     PlaceHolder(String),
     Other(String),
+    Resolved(String),
+}
+impl NestedPageContent {
+    fn new(words: &Vec<String>) -> Result<NestedPageContent, String> {
+        if words.len() < 1 {
+            Err("fn NestedPageContent::new expects at least one element in its words parameter.".to_string())
+        } else {
+            let tag_type = words[0].as_str();
+
+            let required_words: usize = match tag_type {
+                "main" => 1,
+                "output" | "master" | "actual" | "placeholder" | "other" | "resolved" => 2,
+                "calc" => 5,
+                _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
+            };
+
+            if words.len() < required_words {
+                return Err(format!("Insufficient attributes in masterpage tag {}", tag_type).to_string());
+            }
+
+            let new_content = match tag_type {
+                "main" => NestedPageContent::Main,
+                "output" => NestedPageContent::Output(words[1].clone()),
+                "master" => NestedPageContent::Master(words[1].clone()),
+                "actual" => NestedPageContent::Actual(words[1].clone()),
+                "placeholder" => NestedPageContent::PlaceHolder(words[1].clone()),
+                "other" => NestedPageContent::Other(words[1].clone()),
+                "resolved" => NestedPageContent::Resolved(words[1].clone()),
+                "calc" => NestedPageContent::Calc(Calculation::new(words[1].clone(), words[2].clone(), words[3].clone(), words[4].clone())),
+                _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
+            };
+
+            Ok(new_content)
+        }
+    }
 }
 
 impl std::fmt::Display for NestedPageContent {
@@ -63,6 +111,7 @@ impl std::fmt::Display for NestedPageContent {
             NestedPageContent::PlaceHolder(word) => format!("PlaceHolder({word})"),
             NestedPageContent::Other(_) => "Other".to_string(),
             NestedPageContent::Calc(_) => "Calc".to_string(),
+            NestedPageContent::Resolved(word) => format!("Resolved({word})"),
         };
 
         write!(f, "{}", output)
@@ -215,6 +264,20 @@ fn read_flat_content(input: &str) -> Result<Vec<FlatPageContent>, String> {
     }
 }
 
+fn add_content_to_root(root: &mut Node<NestedPageContent>, path: &Vec<usize>, content: NestedPageContent) -> Result<Vec<usize>, String> {
+    match root.add_cargo_under(path, content) {
+        Ok(added_path) => Ok(added_path),
+        Err((err, _)) => Err(format!("{:?}", err)),
+    }
+}
+
+fn borrow_content_from_root<'r, 'p>(root: &'r Node<NestedPageContent>, path: &'p Vec<usize>) -> Result<&'r NestedPageContent, String> {
+    match root.borrow_cargo(path) {
+        Ok(cargo) => Ok(cargo),
+        Err(err) => Err(format!("{:?}", err)), 
+    }
+}
+
 fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
     match read_flat_content(input) {
         Err(err) => Err(err),
@@ -225,7 +288,7 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
             println!("{:#?}", &flat_contents);
             */
 
-            let mut root = Node::new(NestedPageContent::Main);
+            let mut root = Node::new(NestedPageContent::new(&vec!["main".to_string()])?);
             let mut path = root.get_first_path();
 
             for flat_content in flat_contents {
@@ -240,31 +303,25 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
 
                 match flat_content {
                     FlatPageContent::Other(text) => {
-                        root.add_cargo_under(&path, NestedPageContent::Other(text)).unwrap();
+                        add_content_to_root(&mut root, &path, NestedPageContent::new(&vec!["other".to_string(), text])?)?;
                     },
                     FlatPageContent::SelfContainedMPTag(words) => {
-                        let new_cargo: NestedPageContent;
-
                         match words[0].as_str() {
-                            "output" => new_cargo = NestedPageContent::Output(words[1].clone()),
-                            "master" => new_cargo = NestedPageContent::Master(words[1].clone()),
-                            "placeholder" => new_cargo = NestedPageContent::PlaceHolder(words[1].clone()),
-                            // TODO "calc" => new_cargo = NestedPageContent::Calc(),
                             "actual" => return Err("An <+actual ...>...</+actual> tag should have children, and shouldn't be self-contained like <+actual .../>.".to_string()),
-                            &_ => return Err("Unknown masterpage tag found.".to_string()),
+                            _ => (),
                         }
 
-                        root.add_cargo_under(&path, new_cargo).unwrap();
+                        add_content_to_root(&mut root, &path, NestedPageContent::new(&words)?)?;
                     },
                     FlatPageContent::OpeningMPTag(words) => {
                         let new_cargo: NestedPageContent;
 
                         match words[0].as_str() {
-                            "actual" => new_cargo = NestedPageContent::Actual(words[1].clone()),
+                            "actual" => new_cargo = NestedPageContent::new(&words)?,
                             _ => return Err("Invalid non self-contained masterpage tag found.".to_string()),
                         }
 
-                        path = root.add_cargo_under(&path, new_cargo).unwrap();
+                        path = add_content_to_root(&mut root, &path, new_cargo)?;
                     },
                     FlatPageContent::ClosingMPTag(word) => {
                         // Check if the the parent NestedPageContent is the same variant.
@@ -273,7 +330,7 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
                             _ => return Err("Invalid or unknown closing masterpage tag found.".to_string()),
                         };
 
-                        let parent = root.borrow_cargo(&path).unwrap();
+                        let parent = borrow_content_from_root(&root, &path)?;
 
                         /*
                         #[cfg(test)]
@@ -290,7 +347,7 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
             }
 
             // The path should again point to the main content node.
-            if &NestedPageContent::Main != root.borrow_cargo(&path).unwrap() {
+            if &NestedPageContent::Main != borrow_content_from_root(&root, &path)? {
                 Err("Unclosed masterpage tag found.".to_string())
             } else {
                 Ok(root)
@@ -299,9 +356,102 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
     }
 }
 
-pub fn compose<Tioh>(file_path:&OsStr, io_handler:Tioh) -> Result<(), Box<dyn std::error::Error>>
+fn read_text_from_handler<Tioh>(handler: &Tioh, file_path: &OsStr) -> Result<String, String>
 where Tioh: TextIOHandler {
-    let all_texts:String = io_handler.read_text(file_path)?;
+    match handler.read_text(file_path) {
+        Ok(text) => Ok(text),
+        Err(io_err) => Err(format!("{:?}", io_err)),
+    }
+}
+
+fn resolve_masters_in_tree<Tioh>(io_handler: &Tioh, mut content_tree: Node<NestedPageContent>) -> Result<Node<NestedPageContent>, String>
+where Tioh: TextIOHandler {
+    // Resolve all master tags by replacing them with resolved tags containing their referenced file's contents.
+    loop {
+        // Get all master files as trees.
+        let master_trees_result = content_tree.traverse(
+            Ok(Vec::<Node<NestedPageContent>>::new()),
+            |trees_result: &mut Result<Vec<Node<NestedPageContent>>, String>, content, _path|{
+                let mut do_go_on = true;
+
+                match content {
+                    NestedPageContent::Master(ref name) => {
+                        match read_text_from_handler(io_handler, &OsStr::new(name)) {
+                            Ok(master_text) => {
+                                match read_nested_content(master_text.as_str()) {
+                                    Ok(master_tree) =>  {
+                                        match trees_result {
+                                            Ok(ref mut trees) => {
+                                                trees.push(master_tree);
+
+                                                let resolved = NestedPageContent::new(&vec!["resolved".to_string(), name.clone()]);
+                                                match resolved {
+                                                    Ok(rslv) => *content = rslv,
+                                                    Err(err) => {
+                                                        do_go_on = false;
+                                                        *trees_result = Err(err)
+                                                    },
+                                                }
+                                            },
+                                            // Should never occur, but we'll cover this anyway.
+                                            Err(_) => do_go_on = false,
+                                        }
+                                    },
+                                    Err(err) => {
+                                        do_go_on = false;
+                                        *trees_result = Err(err)
+                                    },
+                                }
+                            },
+                            Err(err) => {
+                                do_go_on = false;
+                                *trees_result = Err(err)
+                            },
+                        }
+                    },
+                    _ => (),
+                }
+
+                do_go_on
+            }
+        );
+
+        match master_trees_result {
+            Err(err) => return Err(err),
+            Ok(master_trees) => {
+                if master_trees.len() == 0 {
+                    break;
+                }
+
+                // Prepend all found master trees to the content tree's children.
+                for master_tree in master_trees {
+                    match content_tree.add_node_before(&vec![0], master_tree) {
+                        Ok(_) => (),
+                        Err(path_error) => return Err(format!("Programming error in fn compose : {:?}", path_error)),
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(content_tree)
+}
+
+/// io_handler is mutable, for the result is written back to it.
+pub fn compose<Tioh>(file_path:&OsStr, mut io_handler:Tioh) -> Result<(), String>
+where Tioh: TextIOHandler {
+    let all_texts:String = read_text_from_handler(&io_handler, file_path)?;
+    let mut content_tree = read_nested_content(all_texts.as_str())?;
+    
+    content_tree = match resolve_masters_in_tree(&io_handler, content_tree) {
+        Err(err) => return Err(err),
+        Ok(tree) => tree,
+    };
+
+    // TODO : find the first NestedPageContent::Output. If not found, return error.
+    // TODO : resolve all calculations and placeholders in the order they are found.
+    // TODO : convert the content_tree to a flat content string.
+    // TODO : write flat content string back to io_handler using found output name.
     
     Ok(())
 }
@@ -796,7 +946,7 @@ Some content
     #[test]
     fn operand_new_int() {
         let source = "17";
-        let opd = Operand::new(source);
+        let opd = Operand::new(source.to_string());
 
         assert_eq!(Operand::Value(17f64), opd);
     }
@@ -804,7 +954,7 @@ Some content
     #[test]
     fn operand_new_negative() {
         let source = "-104";
-        let opd = Operand::new(source);
+        let opd = Operand::new(source.to_string());
 
         assert_eq!(Operand::Value(-104f64), opd);
     }
@@ -812,7 +962,7 @@ Some content
     #[test]
     fn operand_new_fractal() {
         let source = "4.999";
-        let opd = Operand::new(source);
+        let opd = Operand::new(source.to_string());
 
         assert_eq!(Operand::Value(4.999f64), opd);
     }
@@ -820,7 +970,7 @@ Some content
     #[test]
     fn operand_new_comma() {
         let source = "-43,4";
-        let opd = Operand::new(source);
+        let opd = Operand::new(source.to_string());
 
         assert_eq!(Operand::Value(-43.4f64), opd);
     }
@@ -828,7 +978,7 @@ Some content
     #[test]
     fn operand_new_placeholder() {
         let source = "text_width";
-        let opd = Operand::new(source);
+        let opd = Operand::new(source.to_string());
 
         assert_eq!(Operand::PlaceHolder("text_width".to_string()), opd);
     }

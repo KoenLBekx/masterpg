@@ -22,6 +22,22 @@ e.g.:
 <+actual goldenCut 1.618034/>
 <+calc largeDivWidth / divHeight goldenCut />
 
+A <+calc/> tag, when evaluated, will be replaced by an <+/actual name>result</+actual> tag, except when the name (the first word after <+actual) is "!" :
+
+<+actual price>200</+actual>
+<+actual commission>20</+actual>
+<+actual taxRate>0.20</+actual>
+<+calc amount + price commission/> ---> <+actual amount>220</+actual>
+<+calc tax * amount taxRate/> ---> <+actual>44</+actual>
+<+calc ! + amount tax/> ---> 264
+
+A placeholder operand in a <+calc/> tag cannot precede the <+actual> or <+calc/> tag providing its value.
+
+<+actual price>200</+actual>
+<+calc amount + price commission/> ---> Error ! Value of commission is unknown.
+<+actual commission>20</+actual>
+
+
 Note that these tags are case-insensitive.
 
 
