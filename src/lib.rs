@@ -448,6 +448,8 @@ where Tioh: TextIOHandler {
         Ok(tree) => tree,
     };
 
+    // TODO : check if NestedPageContent::Actual tags have no recursion by having a placeholder or
+    // calc tag with the same name.
     // TODO : find the first NestedPageContent::Output. If not found, return error.
     // TODO : resolve all calculations and placeholders in the order they are found.
     // TODO : convert the content_tree to a flat content string.
@@ -459,7 +461,47 @@ where Tioh: TextIOHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use string_io_and_mock::MockTextHandler;
     use tree_by_path::Node;
+
+    mod utils {
+        use crate::NestedPageContent;
+        use tree_by_path::Node;
+
+        pub(crate) fn content_tree_to_string(content_tree: &mut Node<NestedPageContent>) -> String {
+            let mut repr = content_tree.traverse(
+                (String::new(), 0usize), 
+                |accum, crg, path|{
+                    let path_len = path.len();
+
+                    if path_len < accum.1 {
+                        for _ in 0..(accum.1 - path_len){
+                            (*accum).0.push_str("]");
+                        }
+                    }
+
+                    if path_len > 0 {
+                        if path[path_len - 1] > 0 {
+                            (*accum).0.push_str(" ");
+                        } else {
+                            (*accum).0.push_str("[");
+                        }
+                    }
+
+                    (*accum).0.push_str(&crg.to_string());
+                    (*accum).1 = path_len;
+
+                    true
+                }
+            );
+
+            for _ in 0..repr.1 {
+                repr.0.push_str("]");
+            }
+
+            repr.0
+        }
+    }
 
     #[test]
     fn master_page_tag_self_contained_empty() {
@@ -831,36 +873,11 @@ Welcome to my site about <+placeholder title/>!
         assert!(result.is_ok());
 
         let mut root = result.unwrap();
-
-        let mut repr = root.traverse(
-            (String::new(), 0usize), 
-            |accum, crg, path|{
-                let path_len = path.len();
-
-                if path_len < accum.1 {
-                    (*accum).0.push_str("]");
-                }
-
-                if path_len > 0 {
-                    if path[path_len - 1] > 0 {
-                        (*accum).0.push_str(" ");
-                    } else {
-                        (*accum).0.push_str("[");
-                    }
-                }
-
-                (*accum).0.push_str(&crg.to_string());
-                (*accum).1 = path_len;
-
-                true
-            }
-        );
-
-        repr.0.push_str("]");
+        let repr = utils::content_tree_to_string(&mut root);
 
         assert_eq!(
-            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other] Actual(body)[Other PlaceHolder(title) Other]".to_string(),
-            repr.0
+            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other] Actual(body)[Other PlaceHolder(title) Other]]".to_string(),
+            repr
         );
     }
 
@@ -981,6 +998,57 @@ Some content
         let opd = Operand::new(source.to_string());
 
         assert_eq!(Operand::PlaceHolder("text_width".to_string()), opd);
+    }
+
+    #[test]
+    fn resolve_markers() {
+        let main_text = "
+<+output test.htm/>
+<+master page.mpx/>
+<+actual chapter>
+Just some blahblah.
+</+actual>
+<+actual title>
+Blahblah
+</+actual>
+".replace("\n", "");
+
+        let page_intermediate = "
+<+master constants.mpm/>
+<!doctype html/>
+<html>
+<head>
+<title><+placeholder title/></title>
+</head>
+<body>
+<+placeholder generalTitle/>
+<+placeholder chapter/>
+</body>
+</html>
+".replace("\n", "");
+
+        let page_constants = "
+<+actual generalTitle>Masterpg test site</+actual>
+".replace("\n", "");
+
+        let content_tree = read_nested_content(main_text.as_str()).unwrap();
+
+        let mut text_handler = MockTextHandler::new();
+        text_handler.write_text(OsStr::new("page.mpx"), page_intermediate).unwrap();
+        text_handler.write_text(OsStr::new("constants.mpm"), page_constants).unwrap();
+
+        let result = resolve_masters_in_tree(&text_handler, content_tree);
+        assert!(result.is_ok());
+        let mut result_tree = result.unwrap();
+        let result_tree_flat = utils::content_tree_to_string(&mut result_tree);
+
+        // Debug 
+        println!("{}", &result_tree_flat);
+
+        assert_eq!(
+            "Main[Main[Actual(generalTitle)[Other]] Main[Resolved(constants.mpm) Other PlaceHolder(title) Other PlaceHolder(generalTitle) PlaceHolder(chapter) Other] Output(test.htm) Resolved(page.mpx) Actual(chapter)[Other] Actual(title)[Other]]",
+            result_tree_flat
+        );
     }
 
     mod enveloppe_same_name {
