@@ -1,5 +1,3 @@
-// TODO : write unit tests on fn resolve_masters_in_tree.
-
 use std::ffi::OsStr;
 use std::mem::discriminant;
 use std::str::FromStr;
@@ -427,7 +425,7 @@ where Tioh: TextIOHandler {
                 for master_tree in master_trees {
                     match content_tree.add_node_before(&vec![0], master_tree) {
                         Ok(_) => (),
-                        Err(path_error) => return Err(format!("Programming error in fn compose : {:?}", path_error)),
+                        Err(path_error) => return Err(format!("Programming error in fn resolve_masters_in_tree : {:?}", path_error)),
                     }
                 }
             }
@@ -435,6 +433,66 @@ where Tioh: TextIOHandler {
     }
 
     Ok(content_tree)
+}
+
+fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Vec<String> {
+    //! Check if NestedPageContent::Actual and Calc tags have no recursion by having a placeholder or
+    //! calc tag with their own name.
+
+    // Get the paths to all the Actual and Calc nodes.
+    let parent_paths_and_names = content_tree.traverse(
+        Vec::<(Vec<usize>, String)>::new(),
+        |paths, content, node_path| {
+            match content {
+                NestedPageContent::Actual(ref word) => paths.push((node_path.clone(), word.clone())),
+                NestedPageContent::Calc(ref calculation) => paths.push((node_path.clone(), calculation.name.clone())),
+                _ => (),
+            }
+
+            true
+        }
+    );
+
+    // For each found parent path, check if its children contain a PlaceHolder or Actual element with the
+    // same name, or a Calc element having the same name as operand or own name.
+    let mut recursives = Vec::<String>::new();
+
+    for parent_path_and_name in parent_paths_and_names {
+        let parent_name = parent_path_and_name.1;
+
+        let parent_node = content_tree.borrow_mut_node(&parent_path_and_name.0)
+            .expect("Function find_recursion_in_content_tree couldn't borrow a container node from its tree, but should have been able to.");
+
+        let has_recursion = parent_node.traverse(
+            false,
+            |accum, content, path| {
+                if path.len() > 0 {
+                    match content {
+                        NestedPageContent::PlaceHolder(ref word) => *accum = *word == parent_name,
+                        NestedPageContent::Calc(ref calculation) => {
+                            // *accum = (calculation.operand1 == parent_name) || (calculation.operand2 == parent_name);
+                            if let Operand::PlaceHolder(ref name) = calculation.operand1 {
+                                *accum = *name == parent_name;
+                            }
+                            
+                            if let Operand::PlaceHolder(ref name) = calculation.operand2 {
+                                *accum = *accum || (*name == parent_name);
+                            }
+                        },
+                        _ => (),
+                    }
+                }
+                
+                !*accum
+            }
+        );
+
+        if has_recursion {
+            (&mut recursives).push(parent_name.clone());
+        }
+    }
+
+    recursives
 }
 
 /// io_handler is mutable, for the result is written back to it.
@@ -448,8 +506,6 @@ where Tioh: TextIOHandler {
         Ok(tree) => tree,
     };
 
-    // TODO : check if NestedPageContent::Actual tags have no recursion by having a placeholder or
-    // calc tag with the same name.
     // TODO : find the first NestedPageContent::Output. If not found, return error.
     // TODO : resolve all calculations and placeholders in the order they are found.
     // TODO : convert the content_tree to a flat content string.
@@ -1049,6 +1105,106 @@ Blahblah
             "Main[Main[Actual(generalTitle)[Other]] Main[Resolved(constants.mpm) Other PlaceHolder(title) Other PlaceHolder(generalTitle) PlaceHolder(chapter) Other] Output(test.htm) Resolved(page.mpx) Actual(chapter)[Other] Actual(title)[Other]]",
             result_tree_flat
         );
+    }
+
+    #[test]
+    fn find_recursion_none() {
+        let content_text = "
+<+output art.htm/>
+<+actual contactData>
+Genario Calogero
+Rambla de la Paz, 7
+Taragona
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+        let mut content_tree = read_nested_content(content_text.as_str()).unwrap();
+        let recursives = find_recursion_in_content_tree(&mut content_tree);
+
+        assert_eq!(0, recursives.len());
+    }
+
+    #[test]
+    fn find_recursion_placeholder() {
+        let content_text = "
+<+output art.htm/>
+<+actual contactData>
+Genario Calogero
+<+placeholder contactData/>
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+        let mut content_tree = read_nested_content(content_text.as_str()).unwrap();
+        let recursives = find_recursion_in_content_tree(&mut content_tree);
+
+        assert_eq!(1, recursives.len());
+        assert_eq!("contactData".to_string(), recursives[0]);
+    }
+
+    #[test]
+    fn find_recursion_calc_operand1() {
+        let content_text = "
+<+output art.htm/>
+<+actual contactData>
+Genario Calogero
+<+calc crazy + contactData 19/>
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+        let mut content_tree = read_nested_content(content_text.as_str()).unwrap();
+        let recursives = find_recursion_in_content_tree(&mut content_tree);
+
+        assert_eq!(1, recursives.len());
+        assert_eq!("contactData".to_string(), recursives[0]);
+    }
+
+    #[test]
+    fn find_recursion_calc_operand2() {
+        let content_text = "
+<+output art.htm/>
+<+actual contactData>
+Genario Calogero
+<+calc crazy + 39 contactData/>
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+        let mut content_tree = read_nested_content(content_text.as_str()).unwrap();
+        let recursives = find_recursion_in_content_tree(&mut content_tree);
+
+        assert_eq!(1, recursives.len());
+        assert_eq!("contactData".to_string(), recursives[0]);
+    }
+
+    #[test]
+    fn find_recursion_two() {
+        let content_text = "
+<+output art.htm/>
+<+actual contactData>
+Genario Calogero
+<+calc crazy + 39 contactData/>
+</+actual>
+<+actual webData>
+e-mail: gencalogero@famous_server.com<br />
+home: <+placeholder webData/>
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+        let mut content_tree = read_nested_content(content_text.as_str()).unwrap();
+        let recursives = find_recursion_in_content_tree(&mut content_tree);
+
+        assert_eq!(2, recursives.len());
+        assert_eq!("contactData".to_string(), recursives[0]);
+        assert_eq!("webData".to_string(), recursives[1]);
     }
 
     mod enveloppe_same_name {
