@@ -495,18 +495,48 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
     recursives
 }
 
+fn find_output_name_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<String, String> {
+    content_tree.traverse(
+        Err("No output name found.".to_string()),
+        |result, content, _path| {
+            match content {
+                NestedPageContent::Output(name) => {
+                    *result = Ok(name.to_string());
+                    false
+                },
+                _ => true,
+            }
+        }
+    )
+}
+
 /// io_handler is mutable, for the result is written back to it.
-pub fn compose<Tioh>(file_path:&OsStr, mut io_handler:Tioh) -> Result<(), String>
+pub fn compose<Tioh>(file_path:&OsStr, io_handler: &mut Tioh) -> Result<(), String>
 where Tioh: TextIOHandler {
-    let all_texts:String = read_text_from_handler(&io_handler, file_path)?;
+    let all_texts:String = read_text_from_handler(io_handler, file_path)?;
     let mut content_tree = read_nested_content(all_texts.as_str())?;
     
-    content_tree = match resolve_masters_in_tree(&io_handler, content_tree) {
+    content_tree = match resolve_masters_in_tree(io_handler, content_tree) {
         Err(err) => return Err(err),
         Ok(tree) => tree,
     };
 
-    // TODO : find the first NestedPageContent::Output. If not found, return error.
+    let recursions = find_recursion_in_content_tree(&mut content_tree);
+    if recursions.len() > 0 {
+        return Err(
+            format!("{} {} {:?}.",
+                "Recursion found in <+placeholder> or <+calc.../>",
+                "tags referring to",
+                recursions
+            ).replace("[", "").replace("]","")
+        );
+    }
+
+    let output_name = match find_output_name_in_content_tree(&mut content_tree) {
+        Ok(name) => name,
+        Err(err) => return Err(err),
+    };
+
     // TODO : resolve all calculations and placeholders in the order they are found.
     // TODO : convert the content_tree to a flat content string.
     // TODO : write flat content string back to io_handler using found output name.
@@ -1205,6 +1235,113 @@ home: <+placeholder webData/>
         assert_eq!(2, recursives.len());
         assert_eq!("contactData".to_string(), recursives[0]);
         assert_eq!("webData".to_string(), recursives[1]);
+    }
+
+    #[test]
+    fn compose_has_recursion() {
+        let content_text = "
+<+output art.htm/>
+<+actual contactData>
+Genario Calogero
+<+calc crazy + 39 contactData/>
+</+actual>
+<+actual webData>
+e-mail: gencalogero@famous_server.com<br />
+home: <+placeholder webData/>
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+
+        let mut text_handler = MockTextHandler::new();
+        let page_file_name = OsStr::new("page.mpx");
+        text_handler.write_text(&page_file_name, content_text).unwrap();
+
+        let result = compose(&page_file_name, &mut text_handler);
+        assert!(result.is_err());
+
+        // Debug
+        // println!("Compose error : {}", result.unwrap_err());
+
+        assert_eq!(
+            "Recursion found in <+placeholder> or <+calc.../> tags referring to \"contactData\", \"webData\".",
+            result.unwrap_err()
+        );
+
+        let read_output_result = text_handler.read_text(&OsStr::new("art.htm"));
+        assert!(read_output_result.is_err());
+        assert_eq!(std::io::ErrorKind::NotFound, read_output_result.unwrap_err().kind());
+    }
+
+    #[test]
+    fn find_output_missing() {
+        let content_text = "
+<+master general.mpm/>
+<+actual contactData>
+Genario Calogero
+Rambla de la Paz, 7
+Taragona
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+        let mut content_tree = read_nested_content(content_text.as_str()).unwrap();
+        let result = find_output_name_in_content_tree(&mut content_tree);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn find_output() {
+        let content_text = "
+<+master general.mpm/>
+<+actual contactData>
+Genario Calogero
+Rambla de la Paz, 7
+Taragona
+</+actual>
+<+output MySite.htm/>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+        let mut content_tree = read_nested_content(content_text.as_str()).unwrap();
+        let result = find_output_name_in_content_tree(&mut content_tree);
+        assert!(result.is_ok());
+        assert_eq!("MySite.htm".to_string(), result.unwrap());
+    }
+
+    #[test]
+    fn compose_missing_output_name() {
+        let content_text = "
+<+actual contactData>
+Genario Calogero
+</+actual>
+<+actual webData>
+e-mail: gencalogero@famous_server.com<br />
+</+actual>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+
+        let mut text_handler = MockTextHandler::new();
+        let page_file_name = OsStr::new("page.mpx");
+        text_handler.write_text(&page_file_name, content_text).unwrap();
+
+        let result = compose(&page_file_name, &mut text_handler);
+        assert!(result.is_err());
+
+        assert_eq!(
+            "No output name found.".to_string(),
+            result.unwrap_err()
+        );
+
+        let read_output_result = text_handler.read_text(&OsStr::new("art.htm"));
+        assert!(read_output_result.is_err());
+        assert_eq!(std::io::ErrorKind::NotFound, read_output_result.unwrap_err().kind());
+
     }
 
     mod enveloppe_same_name {
