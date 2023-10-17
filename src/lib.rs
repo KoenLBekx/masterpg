@@ -40,36 +40,31 @@ impl Operand {
     }
 }
 
-enum OperandIndex {
-    First,
-    Second,
-}
-
 #[derive(PartialEq)]
 #[derive(Debug)]
 #[derive(Clone)]
 struct Calculation {
     name: String,
     operator: String,
-    operand1: Operand,
-    operand2: Operand,
+    operands: Vec<Operand>,
 }
 impl Calculation {
-    fn new(name: String, operator: String, operand1: String, operand2: String) -> Self {
+    fn new(words: Vec<String>) -> Self {
+        let mut opds = Vec::<Operand>::new();
+
+        for i in 2..words.len() {
+            opds.push(Operand::new(words[i].clone()));
+        }
+
         Calculation {
-            name: name.to_string(),
-            operator: operator.to_string(),
-            operand1: Operand::new(operand1),
-            operand2: Operand::new(operand2),
+            name: words[0].clone(),
+            operator: words[1].clone(),
+            operands: opds,
         }
     }
 
-    fn resolve_operand(&mut self, op_index: OperandIndex, value: f64) {
-        let operand = Operand::new_value(value);
-        match op_index {
-            OperandIndex::First => self.operand1 = operand,
-            OperandIndex::Second => self.operand2 = operand,
-        }
+    fn resolve_operand(&mut self, op_index: usize, value: f64) {
+        self.operands[op_index] = Operand::new_value(value);
     }
 }
 
@@ -112,7 +107,7 @@ impl NestedPageContent {
                 "placeholder" => NestedPageContent::PlaceHolder(words[1].clone()),
                 "other" => NestedPageContent::Other(words[1].clone()),
                 "resolved" => NestedPageContent::Resolved(words[1].clone()),
-                "calc" => NestedPageContent::Calc(Calculation::new(words[1].clone(), words[2].clone(), words[3].clone(), words[4].clone())),
+                "calc" => NestedPageContent::Calc(Calculation::new(vec![words[1].clone(), words[2].clone(), words[3].clone(), words[4].clone()])),
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
 
@@ -492,13 +487,10 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
                     match node.cargo {
                         NestedPageContent::PlaceHolder(ref word) => *accum = *word == parent_name,
                         NestedPageContent::Calc(ref calculation) => {
-                            // *accum = (calculation.operand1 == parent_name) || (calculation.operand2 == parent_name);
-                            if let Operand::PlaceHolder(ref name) = calculation.operand1 {
-                                *accum = *name == parent_name;
-                            }
-                            
-                            if let Operand::PlaceHolder(ref name) = calculation.operand2 {
-                                *accum = *accum || (*name == parent_name);
+                            for opd in &calculation.operands {
+                                if let Operand::PlaceHolder(ref name) = opd {
+                                    *accum = *accum || (*name == parent_name);
+                                }
                             }
                         },
                         _ => (),
