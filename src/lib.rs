@@ -1,3 +1,5 @@
+use std::cmp::min;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::mem::discriminant;
 use std::str::FromStr;
@@ -18,6 +20,7 @@ use tree_by_path::Node;
 
 #[derive(PartialEq)]
 #[derive(Debug)]
+#[derive(Clone)]
 enum Operand {
     PlaceHolder(String),
     Value(f64),
@@ -31,10 +34,20 @@ impl Operand {
             Err(_) => Operand::PlaceHolder(source.to_string()),
         }
     }
+
+    pub fn new_value(value: f64) -> Self {
+        Operand::Value(value)
+    }
+}
+
+enum OperandIndex {
+    First,
+    Second,
 }
 
 #[derive(PartialEq)]
 #[derive(Debug)]
+#[derive(Clone)]
 struct Calculation {
     name: String,
     operator: String,
@@ -50,10 +63,19 @@ impl Calculation {
             operand2: Operand::new(operand2),
         }
     }
+
+    fn resolve_operand(&mut self, op_index: OperandIndex, value: f64) {
+        let operand = Operand::new_value(value);
+        match op_index {
+            OperandIndex::First => self.operand1 = operand,
+            OperandIndex::Second => self.operand2 = operand,
+        }
+    }
 }
 
 #[derive(PartialEq)]
 #[derive(Debug)]
+#[derive(Clone)]
 enum NestedPageContent {
     Main,
     Output(String),
@@ -103,13 +125,13 @@ impl std::fmt::Display for NestedPageContent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let output = match self {
             NestedPageContent::Main => "Main".to_string(),
-            NestedPageContent::Output(word) => format!("Output({word})"),
-            NestedPageContent::Master(word) => format!("Master({word})"),
-            NestedPageContent::Actual(word) => format!("Actual({word})"),
-            NestedPageContent::PlaceHolder(word) => format!("PlaceHolder({word})"),
-            NestedPageContent::Other(_) => "Other".to_string(),
+            NestedPageContent::Output(ref word) => format!("Output({word})"),
+            NestedPageContent::Master(ref word) => format!("Master({word})"),
+            NestedPageContent::Actual(ref word) => format!("Actual({word})"),
+            NestedPageContent::PlaceHolder(ref word) => format!("PlaceHolder({word})"),
+            NestedPageContent::Other(ref text) => format!("Other({})", &text[0..min(10, text.len())]),
             NestedPageContent::Calc(_) => "Calc".to_string(),
-            NestedPageContent::Resolved(word) => format!("Resolved({word})"),
+            NestedPageContent::Resolved(ref word) => format!("Resolved({word})"),
         };
 
         write!(f, "{}", output)
@@ -369,10 +391,10 @@ where Tioh: TextIOHandler {
         // Get all master files as trees.
         let master_trees_result = content_tree.traverse(
             Ok(Vec::<Node<NestedPageContent>>::new()),
-            |trees_result: &mut Result<Vec<Node<NestedPageContent>>, String>, content, _path|{
+            |trees_result: &mut Result<Vec<Node<NestedPageContent>>, String>, node, _path|{
                 let mut do_go_on = true;
 
-                match content {
+                match node.cargo {
                     NestedPageContent::Master(ref name) => {
                         match read_text_from_handler(io_handler, &OsStr::new(name)) {
                             Ok(master_text) => {
@@ -384,7 +406,7 @@ where Tioh: TextIOHandler {
 
                                                 let resolved = NestedPageContent::new(&vec!["resolved".to_string(), name.clone()]);
                                                 match resolved {
-                                                    Ok(rslv) => *content = rslv,
+                                                    Ok(rslv) => node.cargo = rslv,
                                                     Err(err) => {
                                                         do_go_on = false;
                                                         *trees_result = Err(err)
@@ -442,8 +464,8 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
     // Get the paths to all the Actual and Calc nodes.
     let parent_paths_and_names = content_tree.traverse(
         Vec::<(Vec<usize>, String)>::new(),
-        |paths, content, node_path| {
-            match content {
+        |paths, node, node_path| {
+            match node.cargo {
                 NestedPageContent::Actual(ref word) => paths.push((node_path.clone(), word.clone())),
                 NestedPageContent::Calc(ref calculation) => paths.push((node_path.clone(), calculation.name.clone())),
                 _ => (),
@@ -465,9 +487,9 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
 
         let has_recursion = parent_node.traverse(
             false,
-            |accum, content, path| {
+            |accum, node, path| {
                 if path.len() > 0 {
-                    match content {
+                    match node.cargo {
                         NestedPageContent::PlaceHolder(ref word) => *accum = *word == parent_name,
                         NestedPageContent::Calc(ref calculation) => {
                             // *accum = (calculation.operand1 == parent_name) || (calculation.operand2 == parent_name);
@@ -498,16 +520,122 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
 fn find_output_name_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<String, String> {
     content_tree.traverse(
         Err("No output name found.".to_string()),
-        |result, content, _path| {
-            match content {
-                NestedPageContent::Output(name) => {
-                    *result = Ok(name.to_string());
+        |result, node, _path| {
+            match node.cargo {
+                NestedPageContent::Output(ref name) => {
+                    *result = Ok(name.clone());
                     false
                 },
                 _ => true,
             }
         }
     )
+}
+
+fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<usize, String> {
+    let mut actuals = HashMap::<String, Node<NestedPageContent>>::new();
+    let mut resolved_count = 0usize;
+    let mut unresolved_count = 0usize;
+    let mut passes = 0usize;
+
+    loop {
+        passes += 1;
+
+        // Add clones of already found actuals to hashmap.
+        actuals = content_tree.traverse(
+            actuals,
+            |acts, node, path| {
+                match node.cargo {
+                    NestedPageContent::Actual(ref name) => {
+                        acts.entry(name.clone()).or_insert((*node).clone());
+                    },
+                    _ => (),
+                }
+
+                true
+            }
+        );
+
+        // Resolve placeholders and calc operands that can already be resolved.
+        (unresolved_count, resolved_count) = content_tree.traverse(
+            (unresolved_count, resolved_count),
+            |counts, node, path| {
+                match node.cargo {
+                    NestedPageContent::PlaceHolder(ref name) => {
+                        match actuals.get(name) {
+                            None => counts.0 += 1,
+                            Some(ref actual_node) => {
+                                counts.1 += 1;
+                                node.cargo = NestedPageContent::Resolved(name.clone());
+
+                                // Add cloned children from the actual node to the current node.
+                                for child in &actual_node.children {
+                                    node.children.push(child.clone());
+                                }
+                            },
+                        }
+                    },
+                    NestedPageContent::Calc(ref mut calculation) => {
+                        // Check if any the calculation's operands can be resolved.
+                        // If so, resolve them.
+                        // If both can be resolved, replace the NestedPageContent::Calc cargo with
+                        // an NestedPageContent::Resolved cargo.
+                        
+                        // TODO : a Calculation should have a vector of operands.
+                        /*
+                        match calculation.operand1 {
+                            Operand::PlaceHolder(ref name) => {
+                                match actuals.get(name) {
+                                    None => counts.0 += 1,
+                                    Some(ref actual_node) => {
+                                        // Read the content of the first Other child.
+                                        let num_text = actual_node.traverse(
+                                            String::new(),
+                                            |accum, nd, _path| {
+                                                match nd.cargo {
+                                                    NestedPageContent::Other(txt) => *accum = txt.clone(),
+                                                    _ => (),
+                                                }
+                                            }
+
+                                            accum.len() > 0
+                                        );
+
+                                        if num_text.len() > 0 {
+                                            let opd = Operand::new(num_text);
+                                            match opd {
+                                                Operand::Value(_) => {
+                                                    calculation.operand1 = opd;
+                                                    counts.1 += 1;
+                                                },
+                                                _ => counts.0 += 1;
+
+                                            }
+                                        }
+                                    },
+                                }
+                            },
+                            _ => (),
+                        }
+                        */
+                    },
+                    _ => (),
+                }
+
+                true
+            }
+        );
+
+        if (unresolved_count == 0) || (resolved_count == 0) {
+            break;
+        }
+    }
+
+    if unresolved_count == 0 {
+        Ok(passes)
+    } else {
+        Err("Unresolvable placeholder tags or calculation operands found.".to_string())
+    }
 }
 
 /// io_handler is mutable, for the result is written back to it.
@@ -557,7 +685,7 @@ mod tests {
         pub(crate) fn content_tree_to_string(content_tree: &mut Node<NestedPageContent>) -> String {
             let mut repr = content_tree.traverse(
                 (String::new(), 0usize), 
-                |accum, crg, path|{
+                |accum, node, path|{
                     let path_len = path.len();
 
                     if path_len < accum.1 {
@@ -574,7 +702,7 @@ mod tests {
                         }
                     }
 
-                    (*accum).0.push_str(&crg.to_string());
+                    (*accum).0.push_str(node.cargo.to_string().as_str());
                     (*accum).1 = path_len;
 
                     true
@@ -962,7 +1090,7 @@ Welcome to my site about <+placeholder title/>!
         let repr = utils::content_tree_to_string(&mut root);
 
         assert_eq!(
-            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other] Actual(body)[Other PlaceHolder(title) Other]]".to_string(),
+            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other(Introducti)] Actual(body)[Other(Welcome to) PlaceHolder(title) Other(!)]]".to_string(),
             repr
         );
     }
@@ -1132,7 +1260,7 @@ Blahblah
         println!("{}", &result_tree_flat);
 
         assert_eq!(
-            "Main[Main[Actual(generalTitle)[Other]] Main[Resolved(constants.mpm) Other PlaceHolder(title) Other PlaceHolder(generalTitle) PlaceHolder(chapter) Other] Output(test.htm) Resolved(page.mpx) Actual(chapter)[Other] Actual(title)[Other]]",
+            "Main[Main[Actual(generalTitle)[Other(Masterpg t)]] Main[Resolved(constants.mpm) Other(<!doctype ) PlaceHolder(title) Other(</title></) PlaceHolder(generalTitle) PlaceHolder(chapter) Other(</body></h)] Output(test.htm) Resolved(page.mpx) Actual(chapter)[Other(Just some )] Actual(title)[Other(Blahblah)]]",
             result_tree_flat
         );
     }
@@ -1342,6 +1470,40 @@ e-mail: gencalogero@famous_server.com<br />
         assert!(read_output_result.is_err());
         assert_eq!(std::io::ErrorKind::NotFound, read_output_result.unwrap_err().kind());
 
+    }
+
+    #[test]
+    fn resolve_references_placeholders() {
+        let content_source_str = "
+<+actual title>Test page</+actual>
+<!doctype html>
+<html>
+<head>
+<title><+placeholder title/></title>
+</head>
+<body>
+<+placeholder page_content/>
+</body>
+</html>
+<+actual page_content>
+This is a test page.
+</+actual>
+".replace("\n", "");
+
+        let content_source = content_source_str.as_str();
+
+        let mut content_tree = read_nested_content(content_source).unwrap();
+        let result = resolve_references_in_content_tree(&mut content_tree);
+        assert!(result.is_ok());
+        assert_eq!(1, result.unwrap());
+        
+        // Debug
+        // println!("{}", utils::content_tree_to_string(&mut content_tree));
+
+        assert_eq!(
+            "Main[Actual(title)[Other(Test page)] Other(<!doctype ) Resolved(title)[Other(Test page)] Other(</title></) Resolved(page_content)[Other(This is a )] Other(</body></h) Actual(page_content)[Other(This is a )]]".to_string(),
+            utils::content_tree_to_string(&mut content_tree)
+        );
     }
 
     mod enveloppe_same_name {
