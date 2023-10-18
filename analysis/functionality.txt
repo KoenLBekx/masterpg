@@ -13,7 +13,6 @@ It processes five kinds of tags in an input file :
 
 <+comment></comment> : will be removed from the output.
 
-*** CALC TAGS ARE PLANNED, BUT NOT YET IMPLEMENTED ***
 <+calc [label] [operator] [actualOperand1] [actualOperand2]/> : performs a calculation : it applies the operator +, -, * or / on two operands the labels of which are the labels of an +actual tag, and replaces the <+calc/> tag with a new actual tag having the same label. (Therefore, a <+calc/> tag cannot have the same label as a pre-existing <+actual> tag.) This resulting <+actual> tag can also be referenced by <+placeholder> tags.
 If one of the actualOperand labels is a literal numerical expression, it is used as such without any lookup in an actual.
 No units may be included in the operands : 10 is allowed, but not 10px.
@@ -22,7 +21,7 @@ e.g.:
 <+actual goldenCut 1.618034/>
 <+calc largeDivWidth / divHeight goldenCut />
 
-A <+calc/> tag, when evaluated, will be replaced by an <+/actual name>result</+actual> tag, except when the name (the first word after <+actual) is "!" :
+A <+calc/> tag, when evaluated, will be replaced by an <+/actual label>result</+actual> tag, except when the label (the first word after <+calc) is "-" :
 
 <+actual price>200</+actual>
 <+actual commission>20</+actual>

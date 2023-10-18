@@ -1,4 +1,10 @@
-use std::cmp::min;
+// TODO: Test unresolved references with fn compose.
+// TODO: Complete fn compose.
+// TODO: Calculation.operator should be an enum instead of a string.
+// TODO: Add more operators to Calculation. (See std::f64)
+//              exp (^, **), sign, round, floor, ceiling, trunc, sin, cos, tan, pi
+
+use std::cmp::min; //{
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::mem::discriminant;
@@ -16,11 +22,9 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated}
 };
 use string_io_and_mock::TextIOHandler;
-use tree_by_path::Node;
+use tree_by_path::Node; //}
 
-#[derive(PartialEq)]
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(PartialEq, Debug, Clone)]
 enum Operand {
     PlaceHolder(String),
     Value(f64),
@@ -38,15 +42,58 @@ impl Operand {
     pub fn new_value(value: f64) -> Self {
         Operand::Value(value)
     }
+
+    pub fn get_value_or_default(&self, default: f64) -> f64 {
+        match self {
+            Operand::PlaceHolder(_) => default,
+            Operand::Value(value) => *value,
+        }
+    }
+}
+impl std::fmt::Display for Operand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let output = match self {
+            Operand::PlaceHolder(ref text) => format!("Opd::P({})", text),
+            Operand::Value(val) => format!("Opd::V({})", val),
+        };
+
+        write!(f, "{}", output)
+    }
 }
 
-#[derive(PartialEq)]
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(PartialEq, Debug, Clone)]
+enum CalcError {
+    OutOfBounds,
+    NotANumber,
+    DivisionByZero,
+    UnknownOperator(String),
+}
+impl std::fmt::Display for CalcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let output = match self {
+            CalcError::OutOfBounds => "OutOfBounds".to_string(),
+            CalcError::NotANumber => "NotANumber".to_string(),
+            CalcError::DivisionByZero => "DivisionByZero".to_string(),
+            CalcError::UnknownOperator(opr) => format!("UnknownOperator: '{}'", opr.to_string()),
+        };
+
+        write!(f, "{}", output)
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum CalculationValue {
+    Unresolved,
+    Resolved(f64),
+    Invalid(CalcError),
+}
+
+#[derive(PartialEq, Debug, Clone)]
 struct Calculation {
     name: String,
     operator: String,
     operands: Vec<Operand>,
+    outcome: CalculationValue,
 }
 impl Calculation {
     fn new(words: Vec<String>) -> Self {
@@ -60,17 +107,109 @@ impl Calculation {
             name: words[0].clone(),
             operator: words[1].clone(),
             operands: opds,
+            outcome: CalculationValue::Unresolved,
         }
     }
 
-    fn resolve_operand(&mut self, op_index: usize, value: f64) {
-        self.operands[op_index] = Operand::new_value(value);
+    fn get_value(&mut self) -> CalculationValue {
+        // Don't recalculate.
+        match self.outcome {
+            CalculationValue::Resolved(_) | CalculationValue::Invalid(_) => self.outcome.clone(),
+            CalculationValue::Unresolved => {
+                // Check if all operands are Operand::Value
+                let mut value_count = 0usize;
+
+                for operand in &self.operands {
+                    if let &Operand::Value(_) = operand {
+                        value_count += 1;
+                    }
+                }
+
+                if value_count < self.operands.len() {
+                    return CalculationValue::Unresolved;
+                }
+
+                let opr = match self.operator.as_str() {
+                        "x" => "*",
+                        ":" => "/",
+                        "÷" => "/",
+                        other_op => other_op,
+                };
+
+                let default_val: f64 = match opr {
+                    "+" | "-" | "abs" | "%" => 0f64,
+                    "min" => f64::MAX,
+                    "max" => f64::MIN,
+                    _ => 1f64,
+                };
+
+                let opds: Vec<f64> = self.operands.iter()
+                    .map(|opd| opd.get_value_or_default(default_val)).collect();
+
+                if self.operands.len() == 0 {
+                    return CalculationValue::Resolved(default_val);
+                }
+
+                let mut calc_outcome = match opr {
+                    "abs" => opds[0].abs(),
+                    _ => opds[0],
+                };
+
+                for &opd in &opds[1..] {
+                    calc_outcome = match opr {
+                        "+" => calc_outcome + opd,
+                        "-" => calc_outcome - opd,
+                        "*" => calc_outcome * opd,
+                        "/" => {
+                            if opd == 0_f64 {
+                                self.outcome = CalculationValue::Invalid(CalcError::DivisionByZero);
+                                return self.outcome.clone();
+                            }
+
+                            calc_outcome / opd
+                        },
+                        "%" => calc_outcome % opd,
+                        "min" => calc_outcome.min(opd),
+                        "max" => calc_outcome.max(opd),
+                        oprx => return CalculationValue::Invalid(CalcError::UnknownOperator(oprx.to_string())),
+                    };
+                }
+
+                // Matching against floats will cause a compiler error in later versions of Rust.
+                let result = if calc_outcome == f64::INFINITY {
+                    CalculationValue::Invalid(CalcError::OutOfBounds)
+                } else if calc_outcome == f64::NEG_INFINITY {
+                    CalculationValue::Invalid(CalcError::OutOfBounds)
+                } else if calc_outcome.is_nan() {
+                    CalculationValue::Invalid(CalcError::NotANumber)
+                } else {
+                    CalculationValue::Resolved(calc_outcome)
+                };
+
+                self.outcome = result.clone();
+                result
+            }
+        }
+    }
+}
+impl std::fmt::Display for Calculation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let operands = self.operands.iter()
+            .fold(String::new(), |mut accum, opd| {
+                let opstr = opd.to_string();
+                accum.push_str(" ");
+                accum.push_str(opstr.as_str());
+                accum
+            }
+        );
+
+        let output = format!("Calc({} {} {})", &self.name, &self.operator, operands);
+
+        write!(f, "{}", output)
     }
 }
 
-#[derive(PartialEq)]
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(PartialEq, Debug, Clone)]
 enum NestedPageContent {
     Main,
     Output(String),
@@ -90,8 +229,7 @@ impl NestedPageContent {
 
             let required_words: usize = match tag_type {
                 "main" => 1,
-                "output" | "master" | "actual" | "placeholder" | "other" | "resolved" => 2,
-                "calc" => 5,
+                "output" | "master" | "actual" | "placeholder" | "calc" | "other" | "resolved" => 2,
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
 
@@ -99,15 +237,17 @@ impl NestedPageContent {
                 return Err(format!("Insufficient attributes in masterpage tag {}", tag_type).to_string());
             }
 
+            let attributes: Vec<String> = words[1..].iter().map(|word| word.clone()).collect();
+
             let new_content = match tag_type {
                 "main" => NestedPageContent::Main,
-                "output" => NestedPageContent::Output(words[1].clone()),
-                "master" => NestedPageContent::Master(words[1].clone()),
-                "actual" => NestedPageContent::Actual(words[1].clone()),
-                "placeholder" => NestedPageContent::PlaceHolder(words[1].clone()),
-                "other" => NestedPageContent::Other(words[1].clone()),
-                "resolved" => NestedPageContent::Resolved(words[1].clone()),
-                "calc" => NestedPageContent::Calc(Calculation::new(vec![words[1].clone(), words[2].clone(), words[3].clone(), words[4].clone()])),
+                "output" => NestedPageContent::Output(attributes[0].clone()),
+                "master" => NestedPageContent::Master(attributes[0].clone()),
+                "actual" => NestedPageContent::Actual(attributes[0].clone()),
+                "placeholder" => NestedPageContent::PlaceHolder(attributes[0].clone()),
+                "other" => NestedPageContent::Other(attributes[0].clone()),
+                "resolved" => NestedPageContent::Resolved(attributes[0].clone()),
+                "calc" => NestedPageContent::Calc(Calculation::new(attributes)),
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
 
@@ -125,7 +265,7 @@ impl std::fmt::Display for NestedPageContent {
             NestedPageContent::Actual(ref word) => format!("Actual({word})"),
             NestedPageContent::PlaceHolder(ref word) => format!("PlaceHolder({word})"),
             NestedPageContent::Other(ref text) => format!("Other({})", &text[0..min(10, text.len())]),
-            NestedPageContent::Calc(_) => "Calc".to_string(),
+            NestedPageContent::Calc(calculation) => calculation.to_string(),
             NestedPageContent::Resolved(ref word) => format!("Resolved({word})"),
         };
 
@@ -133,8 +273,7 @@ impl std::fmt::Display for NestedPageContent {
     }
 }
 
-#[derive(PartialEq)]
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 enum FlatPageContent {
     SelfContainedMPTag(Vec<String>),
     OpeningMPTag(Vec<String>),
@@ -526,17 +665,22 @@ fn find_output_name_in_content_tree(content_tree: &mut Node<NestedPageContent>) 
 
 fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<usize, String> {
     let mut actuals = HashMap::<String, Node<NestedPageContent>>::new();
-    let mut resolved_count = 0usize;
-    let mut unresolved_count = 0usize;
     let mut passes = 0usize;
 
-    loop {
+    #[cfg(test)]
+    {
+        println!("~~~~~~~~~~~~~~~~~~~~ Ref. resolution start : content_tree :\n{}",
+            tests::utils::content_tree_to_string(content_tree));
+    }
+
+    let unresolved_tally = loop {
+
         passes += 1;
 
         // Add clones of already found actuals to hashmap.
         actuals = content_tree.traverse(
             actuals,
-            |acts, node, path| {
+            |acts, node, _path| {
                 match node.cargo {
                     NestedPageContent::Actual(ref name) => {
                         acts.entry(name.clone()).or_insert((*node).clone());
@@ -549,9 +693,9 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
         );
 
         // Resolve placeholders and calc operands that can already be resolved.
-        (unresolved_count, resolved_count) = content_tree.traverse(
-            (unresolved_count, resolved_count),
-            |counts, node, path| {
+        let (unresolved_count, resolved_count) = content_tree.traverse(
+            (0, 0),
+            |counts, node, _path| {
                 match node.cargo {
                     NestedPageContent::PlaceHolder(ref name) => {
                         match actuals.get(name) {
@@ -559,6 +703,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                             Some(ref actual_node) => {
                                 counts.1 += 1;
                                 node.cargo = NestedPageContent::Resolved(name.clone());
+                                node.children.clear();
 
                                 // Add cloned children from the actual node to the current node.
                                 for child in &actual_node.children {
@@ -570,46 +715,80 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                     NestedPageContent::Calc(ref mut calculation) => {
                         // Check if any the calculation's operands can be resolved.
                         // If so, resolve them.
-                        // If both can be resolved, replace the NestedPageContent::Calc cargo with
-                        // an NestedPageContent::Resolved cargo.
-                        
-                        // TODO : a Calculation should have a vector of operands.
-                        /*
-                        match calculation.operand1 {
-                            Operand::PlaceHolder(ref name) => {
-                                match actuals.get(name) {
-                                    None => counts.0 += 1,
-                                    Some(ref actual_node) => {
-                                        // Read the content of the first Other child.
-                                        let num_text = actual_node.traverse(
-                                            String::new(),
-                                            |accum, nd, _path| {
-                                                match nd.cargo {
-                                                    NestedPageContent::Other(txt) => *accum = txt.clone(),
-                                                    _ => (),
+                        // If all can be resolved, replace the NestedPageContent::Calc cargo with
+                        // an NestedPageContent::Actual cargo, except when the name is "-",
+                        // in which case a NestedPageContent::Other cargo is produced.
+
+                        for operand in &mut calculation.operands {
+                            match operand {
+                                Operand::PlaceHolder(ref name) => {
+
+                                    #[cfg(test)]
+                                    {
+                                        println!("Looking for an actual for {}", name);
+                                    }
+
+                                    match actuals.get_mut(name) {
+                                        None => counts.0 += 1,
+                                        Some(ref mut actual_node) => {
+                                            // Read the content of the first Other child.
+                                            let num_text = actual_node.traverse(
+                                                String::new(),
+                                                |accum, nd, _path| {
+                                                    match nd.cargo {
+                                                        NestedPageContent::Other(ref txt) => *accum = txt.clone(),
+                                                        _ => (),
+                                                    }
+
+                                                    accum.len() == 0
                                                 }
+                                            );
+
+                                            #[cfg(test)]
+                                            {
+                                                println!("num_text = {}", &num_text);
                                             }
 
-                                            accum.len() > 0
-                                        );
+                                            if num_text.len() > 0 {
+                                                let opd = Operand::new(num_text);
 
-                                        if num_text.len() > 0 {
-                                            let opd = Operand::new(num_text);
-                                            match opd {
-                                                Operand::Value(_) => {
-                                                    calculation.operand1 = opd;
-                                                    counts.1 += 1;
-                                                },
-                                                _ => counts.0 += 1;
+                                                match opd {
+                                                    Operand::Value(_) => {
+                                                        *operand = opd;
+                                                        counts.1 += 1;
+                                                    },
+                                                    _ => counts.0 += 1,
 
+                                                }
+                                            } else {
+                                                counts.0 += 1;
                                             }
-                                        }
-                                    },
-                                }
+                                        },
+                                    }
+                                },
+                                _ => (),
+                            }
+                        } // end for
+
+                        // Try and resolve the calculation.
+                        match calculation.get_value() {
+                            CalculationValue::Unresolved => (),
+                            CalculationValue::Resolved(ref val) => {
+                                node.cargo = match calculation.name.as_str() {
+                                    "-" => NestedPageContent::Resolved(calculation.name.clone()),
+                                    nm => NestedPageContent::Actual(nm.to_string()),
+                                };
+
+                                node.children.clear();
+                                node.children.push(Node::new(NestedPageContent::Other(val.to_string())));
                             },
-                            _ => (),
+                            CalculationValue::Invalid(calc_err) => {
+                                node.cargo = NestedPageContent::Resolved(calculation.name.clone());
+
+                                node.children.clear();
+                                node.children.push(Node::new(NestedPageContent::Other(calc_err.to_string())));
+                            },
                         }
-                        */
                     },
                     _ => (),
                 }
@@ -618,12 +797,23 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
             }
         );
 
-        if (unresolved_count == 0) || (resolved_count == 0) {
-            break;
-        }
-    }
+        #[cfg(test)]
+        {
+            println!("~~~~~~~~~~~~~~~~~~~~ Unresoldved: {} ~~~~ Resolved: {}",
+                unresolved_count,
+                resolved_count
+            );
 
-    if unresolved_count == 0 {
+            println!("~~~~~~~~~~~~~~~~~~~~ Ref. resolution loop  : content_tree :\n{}",
+                tests::utils::content_tree_to_string(content_tree));
+        }
+
+        if (unresolved_count == 0) || (resolved_count == 0) {
+            break unresolved_count;
+        }
+    };
+
+    if unresolved_tally == 0 {
         Ok(passes)
     } else {
         Err("Unresolvable placeholder tags or calculation operands found.".to_string())
@@ -657,7 +847,9 @@ where Tioh: TextIOHandler {
         Err(err) => return Err(err),
     };
 
-    // TODO : resolve all calculations and placeholders in the order they are found.
+    // Resolve all calculations and placeholders.
+    resolve_references_in_content_tree(&mut content_tree)?;
+
     // TODO : convert the content_tree to a flat content string.
     // TODO : write flat content string back to io_handler using found output name.
     
@@ -670,7 +862,7 @@ mod tests {
     use string_io_and_mock::MockTextHandler;
     use tree_by_path::Node;
 
-    mod utils {
+    pub mod utils {
         use crate::NestedPageContent;
         use tree_by_path::Node;
 
@@ -1483,11 +1675,9 @@ This is a test page.
 ".replace("\n", "");
 
         let content_source = content_source_str.as_str();
-
         let mut content_tree = read_nested_content(content_source).unwrap();
         let result = resolve_references_in_content_tree(&mut content_tree);
         assert!(result.is_ok());
-        assert_eq!(1, result.unwrap());
         
         // Debug
         // println!("{}", utils::content_tree_to_string(&mut content_tree));
@@ -1496,6 +1686,198 @@ This is a test page.
             "Main[Actual(title)[Other(Test page)] Other(<!doctype ) Resolved(title)[Other(Test page)] Other(</title></) Resolved(page_content)[Other(This is a )] Other(</body></h) Actual(page_content)[Other(This is a )]]".to_string(),
             utils::content_tree_to_string(&mut content_tree)
         );
+    }
+
+    #[test]
+    fn resolve_references_calc() {
+        let content_source_str = "
+<+actual start>70</+actual>
+<+actual sub>10</+actual>
+<+calc AAA - start sub/>
+<+calc - / AAA BBB/>
+<+calc BBB min start 25/>
+".replace("\n", "");
+
+        let content_source = content_source_str.as_str();
+        let mut content_tree = read_nested_content(content_source).unwrap();
+        let result = resolve_references_in_content_tree(&mut content_tree);
+        assert!(result.is_ok());
+
+        // Debug
+        // println!("{}", utils::content_tree_to_string(&mut content_tree));
+
+        assert_eq!(
+            "Main[Actual(start)[Other(70)] Actual(sub)[Other(10)] Actual(AAA)[Other(60)] Resolved(-)[Other(2.4)] Actual(BBB)[Other(25)]]".to_string(),
+            utils::content_tree_to_string(&mut content_tree)
+        );
+    }
+
+    #[test]
+    fn calc_resolve_unresolved_operand() {
+        let words = vec!["test", "+", "-19.2", "width"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        
+        let mut outcome = c.get_value();
+        assert_eq!(CalculationValue::Unresolved, outcome);
+
+        c.operands[1] = Operand::Value(10_f64);
+        outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(-9.2_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_add_2() {
+        let words = vec!["test", "+", "-19.2", "40"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        for _ in 0..2 {
+            let outcome = c.get_value();
+            assert_eq!(CalculationValue::Resolved(20.8_f64), outcome);
+        }
+    }
+
+    #[test]
+    fn calc_resolve_multiply_4() {
+        let words = vec!["test", "*", "2", "3", "4", "5"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(120_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_subtract_none() {
+        let words = vec!["test", "-"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(0_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_subtract_1() {
+        let words = vec!["test", "-", "18"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(18_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_subtract_2() {
+        let words = vec!["test", "-", "100.7", "20.3"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(80.4_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_divide_3() {
+        let words = vec!["test", "/", "30", "5", "2"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(3_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_divide_by_zero() {
+        let words = vec!["test", "/", "30", "0", "2"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Invalid(CalcError::DivisionByZero), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_min_4() {
+        let words = vec!["test", "min", "30", "5.5", "-2", "500"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(-2_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_min_1() {
+        let words = vec!["test", "min", "30"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(30_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_min_0() {
+        let words = vec!["test", "min"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(f64::MAX), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_max_0() {
+        let words = vec!["test", "max"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(f64::MIN), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_max_1() {
+        let words = vec!["test", "max", "-13.333"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(-13.333_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_max_2() {
+        let words = vec!["test", "max", "100", "100.01"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(100.01_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_abs_pos() {
+        let words = vec!["test", "abs", "100"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(100_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_abs_neg() {
+        let words = vec!["test", "abs", "-100"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(100_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_remainder_2() {
+        let words = vec!["test", "%", "100", "7"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(2_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_remainder_1() {
+        let words = vec!["test", "%", "73",];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(73_f64), outcome);
     }
 
     mod enveloppe_same_name {
