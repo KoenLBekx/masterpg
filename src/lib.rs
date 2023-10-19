@@ -1,8 +1,7 @@
-// TODO: Test unresolved references with fn compose.
-// TODO: Complete fn compose.
 // TODO: Calculation.operator should be an enum instead of a string.
 // TODO: Add more operators to Calculation. (See std::f64)
-//              exp (^, **), sign, round, floor, ceiling, trunc, sin, cos, tan, pi
+//              exp (^, **), sign, round, floor, ceiling, trunc, ?(if 1 then 2 else 3)
+// TODO: Add integration test using a FileTextHandler to fn compose.
 
 use std::cmp::min; //{
 use std::collections::HashMap;
@@ -22,7 +21,7 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated}
 };
 use string_io_and_mock::TextIOHandler;
-use tree_by_path::Node; //}
+use tree_by_path::{Node, TraverseAction}; //}
 
 #[derive(PartialEq, Debug, Clone)]
 enum Operand {
@@ -553,20 +552,20 @@ where Tioh: TextIOHandler {
                                     },
                                     Err(err) => {
                                         do_go_on = false;
-                                        *trees_result = Err(err)
+                                        *trees_result = Err(err);
                                     },
                                 }
                             },
                             Err(err) => {
                                 do_go_on = false;
-                                *trees_result = Err(err)
+                                *trees_result = Err(format!("Master file '{}' couldn't be read : {}.", name, err));
                             },
                         }
                     },
                     _ => (),
                 }
 
-                do_go_on
+                if do_go_on {TraverseAction::Continue} else {TraverseAction::Stop}
             }
         );
 
@@ -605,7 +604,7 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
                 _ => (),
             }
 
-            true
+            TraverseAction::Continue
         }
     );
 
@@ -636,7 +635,7 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
                     }
                 }
                 
-                !*accum
+                if *accum {TraverseAction::Stop} else {TraverseAction::Continue}
             }
         );
 
@@ -655,9 +654,9 @@ fn find_output_name_in_content_tree(content_tree: &mut Node<NestedPageContent>) 
             match node.cargo {
                 NestedPageContent::Output(ref name) => {
                     *result = Ok(name.clone());
-                    false
+                    TraverseAction::Stop
                 },
-                _ => true,
+                _ => TraverseAction::Continue,
             }
         }
     )
@@ -688,7 +687,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                     _ => (),
                 }
 
-                true
+                TraverseAction::Continue
             }
         );
 
@@ -740,7 +739,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                                                         _ => (),
                                                     }
 
-                                                    accum.len() == 0
+                                                    if accum.len() == 0 {TraverseAction::Continue} else {TraverseAction::Stop}
                                                 }
                                             );
 
@@ -793,7 +792,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                     _ => (),
                 }
 
-                true
+                TraverseAction::Continue
             }
         );
 
@@ -820,16 +819,33 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
     }
 }
 
+fn content_tree_to_output_string(content_tree: &mut Node<NestedPageContent>) -> String {
+    content_tree.traverse(
+        String::new(),
+        |accum, node, _path| {
+            // Skip actual nodes entirely,
+            // because they can contain Other and Resolved nodes
+            // that shouldn't be enclosed in the output.
+
+            match node.cargo {
+                NestedPageContent::Actual(_) => TraverseAction::SkipChildren,
+                NestedPageContent::Other(ref content) => {
+                    accum.push_str(content.trim());
+                    TraverseAction::Continue
+                },
+                _ => TraverseAction::Continue,
+            }
+        }
+    ).trim().to_string()
+}
+
 /// io_handler is mutable, for the result is written back to it.
 pub fn compose<Tioh>(file_path:&OsStr, io_handler: &mut Tioh) -> Result<(), String>
 where Tioh: TextIOHandler {
     let all_texts:String = read_text_from_handler(io_handler, file_path)?;
     let mut content_tree = read_nested_content(all_texts.as_str())?;
     
-    content_tree = match resolve_masters_in_tree(io_handler, content_tree) {
-        Err(err) => return Err(err),
-        Ok(tree) => tree,
-    };
+    content_tree = resolve_masters_in_tree(io_handler, content_tree)?;
 
     let recursions = find_recursion_in_content_tree(&mut content_tree);
     if recursions.len() > 0 {
@@ -842,18 +858,18 @@ where Tioh: TextIOHandler {
         );
     }
 
-    let output_name = match find_output_name_in_content_tree(&mut content_tree) {
-        Ok(name) => name,
-        Err(err) => return Err(err),
-    };
+    let output_name_string  = find_output_name_in_content_tree(&mut content_tree)?;
+    let output_name = OsStr::new(&output_name_string);
 
     // Resolve all calculations and placeholders.
     resolve_references_in_content_tree(&mut content_tree)?;
 
-    // TODO : convert the content_tree to a flat content string.
-    // TODO : write flat content string back to io_handler using found output name.
-    
-    Ok(())
+    let output = content_tree_to_output_string(&mut content_tree);
+
+    match io_handler.write_text(&output_name, output) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -864,7 +880,7 @@ mod tests {
 
     pub mod utils {
         use crate::NestedPageContent;
-        use tree_by_path::Node;
+        use tree_by_path::{Node, TraverseAction};
 
         pub(crate) fn content_tree_to_string(content_tree: &mut Node<NestedPageContent>) -> String {
             let mut repr = content_tree.traverse(
@@ -889,7 +905,7 @@ mod tests {
                     (*accum).0.push_str(node.cargo.to_string().as_str());
                     (*accum).1 = path_len;
 
-                    true
+                    TraverseAction::Continue
                 }
             );
 
@@ -1625,38 +1641,6 @@ Taragona
     }
 
     #[test]
-    fn compose_missing_output_name() {
-        let content_text = "
-<+actual contactData>
-Genario Calogero
-</+actual>
-<+actual webData>
-e-mail: gencalogero@famous_server.com<br />
-</+actual>
-<!doctype html/>
-<etc>
-".replace("\n", "");
-
-
-        let mut text_handler = MockTextHandler::new();
-        let page_file_name = OsStr::new("page.mpx");
-        text_handler.write_text(&page_file_name, content_text).unwrap();
-
-        let result = compose(&page_file_name, &mut text_handler);
-        assert!(result.is_err());
-
-        assert_eq!(
-            "No output name found.".to_string(),
-            result.unwrap_err()
-        );
-
-        let read_output_result = text_handler.read_text(&OsStr::new("art.htm"));
-        assert!(read_output_result.is_err());
-        assert_eq!(std::io::ErrorKind::NotFound, read_output_result.unwrap_err().kind());
-
-    }
-
-    #[test]
     fn resolve_references_placeholders() {
         let content_source_str = "
 <+actual title>Test page</+actual>
@@ -1878,6 +1862,259 @@ This is a test page.
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(73_f64), outcome);
+    }
+
+    #[test]
+    fn compose_has_unresolved_placeholders() {
+        let content_text = "
+<+output art.htm/>
+<+actual webData>
+e-mail: gencalogero@famous_server.com<br />
+</+actual>
+<body>
+<+placeholder telephone/>
+</body>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+
+        let mut text_handler = MockTextHandler::new();
+        let page_file_name = OsStr::new("page.mpx");
+        text_handler.write_text(&page_file_name, content_text).unwrap();
+
+        let result = compose(&page_file_name, &mut text_handler);
+        assert!(result.is_err());
+
+        // Debug
+        // println!("Compose error : {}", result.unwrap_err());
+
+        assert_eq!(
+            "Unresolvable placeholder tags or calculation operands found.",
+            result.unwrap_err()
+        );
+
+        let read_output_result = text_handler.read_text(&OsStr::new("art.htm"));
+        assert!(read_output_result.is_err());
+        assert_eq!(std::io::ErrorKind::NotFound, read_output_result.unwrap_err().kind());
+    }
+
+    #[test]
+    fn compose_has_unresolved_calculation_operands() {
+        let content_text = "
+<+output art.htm/>
+<+actual webData>
+e-mail: gencalogero@famous_server.com<br />
+</+actual>
+<body>
+<+placeholder webData/>
+<+calc - + 20 subTotal/>
+</body>
+<!doctype html/>
+<etc>
+".replace("\n", "");
+
+
+        let mut text_handler = MockTextHandler::new();
+        let page_file_name = OsStr::new("page.mpx");
+        text_handler.write_text(&page_file_name, content_text).unwrap();
+
+        let result = compose(&page_file_name, &mut text_handler);
+        assert!(result.is_err());
+
+        // Debug
+        // println!("Compose error : {}", result.unwrap_err());
+
+        assert_eq!(
+            "Unresolvable placeholder tags or calculation operands found.",
+            result.unwrap_err()
+        );
+
+        let read_output_result = text_handler.read_text(&OsStr::new("art.htm"));
+        assert!(read_output_result.is_err());
+        assert_eq!(std::io::ErrorKind::NotFound, read_output_result.unwrap_err().kind());
+    }
+
+    #[test]
+    fn tree_to_output() {
+        let content_source_str = "
+<+actual title>Test page</+actual>
+<!doctype html>
+<html>
+<head>
+<title><+placeholder title/></title>
+</head>
+<body>
+<+placeholder page_content/>
+</body>
+</html>
+<+actual page_content>
+<+placeholder title/><br />
+This is a test page.<br />
+Calculation outcome is: <+calc - / AAA BBB/>
+</+actual>
+<+actual start>70</+actual>
+<+actual sub>10</+actual>
+<+calc AAA - start sub/>
+<+calc BBB min start 25/>
+";
+
+        let mut content_tree = read_nested_content(content_source_str).unwrap();
+        resolve_references_in_content_tree(&mut content_tree).unwrap();
+        let output = content_tree_to_output_string(&mut content_tree);
+
+        // Debug
+        // println!("Output string:\n{}", &output);
+
+        let expected = "
+<!doctype html>
+<html>
+<head>
+<title>Test page</title>
+</head>
+<body>Test page<br />
+This is a test page.<br />
+Calculation outcome is:2.4</body>
+</html>
+        ".trim().to_string();
+
+        assert_eq!(expected, output);
+    }
+
+    #[test]
+    fn compose_with_master() {
+        let master_source = "
+<!doctype html>
+<html>
+<head>
+<title><+placeholder title/></title>
+</head>
+<body>
+<+placeholder page_content/>
+</body>
+</html>
+".trim();
+
+        let page_content_source ="
+<+master general.mpm/>
+<+output testPage.htm/>
+
+<+actual title>Test page</+actual>
+
+<+actual page_content>
+<+placeholder title/><br />
+This is a test page.<br />
+Calculation outcome is: <+calc - / AAA BBB/>
+</+actual>
+
+<+actual start>70</+actual>
+<+actual sub>10</+actual>
+<+calc AAA - start sub/>
+<+calc BBB min start 25/>
+".trim();
+
+        let master_name = OsStr::new("general.mpm");
+        let client_name = OsStr::new("testPage.mpc");
+
+        let mut text_handler = MockTextHandler::new();
+        text_handler.write_text(&master_name, master_source.to_string()).unwrap();
+        text_handler.write_text(&client_name, page_content_source.to_string()).unwrap();
+
+        let result = compose(&client_name, &mut text_handler);
+        assert!(result.is_ok());
+
+        let output = text_handler.read_text(&OsStr::new("testPage.htm")).unwrap();
+
+        // Debug
+        // println!("Composed file:\n{}", &output);
+
+        let expected = "
+<!doctype html>
+<html>
+<head>
+<title>Test page</title>
+</head>
+<body>Test page<br />
+This is a test page.<br />
+Calculation outcome is:2.4</body>
+</html>
+".trim().to_string();
+
+        assert_eq!(expected, output);
+    }
+
+    #[test]
+    fn compose_missing_master() {
+        let page_content_source ="
+<+master general.mpm/>
+<+output testPage.htm/>
+
+<+actual title>Test page</+actual>
+
+<+actual page_content>
+<+placeholder title/><br />
+This is a test page.<br />
+Calculation outcome is: <+calc - / AAA BBB/>
+</+actual>
+
+<+actual start>70</+actual>
+<+actual sub>10</+actual>
+<+calc AAA - start sub/>
+<+calc BBB min start 25/>
+".trim();
+
+        let client_name = OsStr::new("testPage.mpc");
+
+        let mut text_handler = MockTextHandler::new();
+        text_handler.write_text(&client_name, page_content_source.to_string()).unwrap();
+
+        let result = compose(&client_name, &mut text_handler);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().starts_with("Master file 'general.mpm' couldn't be read"));
+        assert!(text_handler.read_text(&OsStr::new("testPage.htm")).is_err());
+    }
+
+    #[test]
+    fn compose_missing_output() {
+        let master_source = "
+<!doctype html>
+<html>
+<head>
+<title><+placeholder title/></title>
+</head>
+<body>
+<+placeholder page_content/>
+</body>
+</html>
+".trim();
+
+        let page_content_source ="
+<+master general.mpm/>
+
+<+actual title>Test page</+actual>
+
+<+actual page_content>
+<+placeholder title/><br />
+This is a test page.<br />
+Calculation outcome is: <+calc - / AAA BBB/>
+</+actual>
+
+<+actual start>70</+actual>
+<+actual sub>10</+actual>
+<+calc AAA - start sub/>
+<+calc BBB min start 25/>
+".trim();
+
+        let master_name = OsStr::new("general.mpm");
+        let client_name = OsStr::new("testPage.mpc");
+
+        let mut text_handler = MockTextHandler::new();
+        text_handler.write_text(&master_name, master_source.to_string()).unwrap();
+        text_handler.write_text(&client_name, page_content_source.to_string()).unwrap();
+
+        let result = compose(&client_name, &mut text_handler);
+        assert!(result.is_err());
+        assert_eq!("No output name found.".to_string(), result.unwrap_err());
     }
 
     mod enveloppe_same_name {
