@@ -1,7 +1,10 @@
-// TODO: Calculation.operator should be an enum instead of a string.
-// TODO: Add more operators to Calculation. (See std::f64)
-//              exp (^, **), sign, round, floor, ceiling, trunc, ?(if 1 then 2 else 3)
-// TODO: Add integration test using a FileTextHandler to fn compose.
+// TODO: Put tests of mod enveloppe in separate crate.
+// TODO: Add integration test on fn compose using a FileTextHandler.
+// TODO: Complete main.rs
+// TODO: Add documentation
+// TODO: Change version to 1.0.0 after doing the same for tree_by_path and string_io_and_mock.
+// TODO?: Add more operators to Calculation. (See std::f64)
+//              round, floor, ceiling, trunc, ?(if 1 then 2 else 3)
 
 use std::cmp::min; //{
 use std::collections::HashMap;
@@ -10,14 +13,10 @@ use std::mem::discriminant;
 use std::str::FromStr;
 use nom::{
     branch::alt,
-    bytes::complete::{is_a, is_not, tag, take},
-    character::complete::char,
-    combinator::{map, opt, peek, recognize, verify},
-    Err,
-    error::{Error, ErrorKind},
+    bytes::complete::{is_a, is_not, tag},
+    combinator::{map, opt, peek},
     IResult,
     multi::{many0, many1, separated_list0},
-    Parser,
     sequence::{delimited, pair, preceded, terminated}
 };
 use string_io_and_mock::TextIOHandler;
@@ -36,10 +35,6 @@ impl Operand {
             Ok(num) => Operand::Value(num),
             Err(_) => Operand::PlaceHolder(source.to_string()),
         }
-    }
-
-    pub fn new_value(value: f64) -> Self {
-        Operand::Value(value)
     }
 
     pub fn get_value_or_default(&self, default: f64) -> f64 {
@@ -88,26 +83,56 @@ enum CalculationValue {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+enum Operator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    Min,
+    Max,
+    Abs,
+    Exp,
+    Sign,
+}
+
+#[derive(PartialEq, Debug, Clone)]
 struct Calculation {
     name: String,
-    operator: String,
+    operator: Operator,
     operands: Vec<Operand>,
     outcome: CalculationValue,
 }
 impl Calculation {
-    fn new(words: Vec<String>) -> Self {
+    fn new(words: Vec<String>) -> Result<Self, String> {
         let mut opds = Vec::<Operand>::new();
 
         for i in 2..words.len() {
             opds.push(Operand::new(words[i].clone()));
         }
 
-        Calculation {
+        let opr_string = words[1].to_lowercase();
+
+        let operator = match opr_string.as_str() {
+            "+" => Operator::Add,
+            "-" => Operator::Subtract,
+            "*" | "x" => Operator::Multiply,
+            "/" | ":" | "÷" => Operator::Divide,
+            "%" => Operator::Remainder,
+            "min" => Operator::Min,
+            "max" => Operator::Max,
+            "abs" => Operator::Abs,
+            "exp" | "pow" | "^" | "**" => Operator::Exp,
+            "sign" => Operator::Sign,
+            _ => return Err(CalcError::UnknownOperator(opr_string).to_string()),
+        };
+
+        Ok(Calculation {
             name: words[0].clone(),
-            operator: words[1].clone(),
+            operator: operator,
             operands: opds,
             outcome: CalculationValue::Unresolved,
-        }
+        })
     }
 
     fn get_value(&mut self) -> CalculationValue {
@@ -128,17 +153,13 @@ impl Calculation {
                     return CalculationValue::Unresolved;
                 }
 
-                let opr = match self.operator.as_str() {
-                        "x" => "*",
-                        ":" => "/",
-                        "÷" => "/",
-                        other_op => other_op,
-                };
-
-                let default_val: f64 = match opr {
-                    "+" | "-" | "abs" | "%" => 0f64,
-                    "min" => f64::MAX,
-                    "max" => f64::MIN,
+                let default_val: f64 = match self.operator {
+                    Operator::Add |
+                    Operator::Subtract |
+                    Operator::Remainder |
+                    Operator::Abs => 0f64,
+                    Operator::Min => f64::MAX,
+                    Operator::Max => f64::MIN,
                     _ => 1f64,
                 };
 
@@ -149,17 +170,18 @@ impl Calculation {
                     return CalculationValue::Resolved(default_val);
                 }
 
-                let mut calc_outcome = match opr {
-                    "abs" => opds[0].abs(),
-                    _ => opds[0],
+                let mut calc_outcome = match self.operator {
+                    Operator::Abs => opds[0].abs(),
+                    Operator::Sign => opds[0].signum(),
+                    _ => opds[0]
                 };
 
                 for &opd in &opds[1..] {
-                    calc_outcome = match opr {
-                        "+" => calc_outcome + opd,
-                        "-" => calc_outcome - opd,
-                        "*" => calc_outcome * opd,
-                        "/" => {
+                    calc_outcome = match self.operator {
+                        Operator::Add => calc_outcome + opd,
+                        Operator::Subtract => calc_outcome - opd,
+                        Operator::Multiply => calc_outcome * opd,
+                        Operator::Divide => {
                             if opd == 0_f64 {
                                 self.outcome = CalculationValue::Invalid(CalcError::DivisionByZero);
                                 return self.outcome.clone();
@@ -167,10 +189,12 @@ impl Calculation {
 
                             calc_outcome / opd
                         },
-                        "%" => calc_outcome % opd,
-                        "min" => calc_outcome.min(opd),
-                        "max" => calc_outcome.max(opd),
-                        oprx => return CalculationValue::Invalid(CalcError::UnknownOperator(oprx.to_string())),
+                        Operator::Remainder => calc_outcome % opd,
+                        Operator::Min => calc_outcome.min(opd),
+                        Operator::Max => calc_outcome.max(opd),
+                        Operator::Abs => calc_outcome,
+                        Operator::Exp => calc_outcome.powf(opd),
+                        Operator::Sign => calc_outcome / opd.signum(),
                     };
                 }
 
@@ -202,7 +226,7 @@ impl std::fmt::Display for Calculation {
             }
         );
 
-        let output = format!("Calc({} {} {})", &self.name, &self.operator, operands);
+        let output = format!("Calc({} {:?} {})", &self.name, &self.operator, operands);
 
         write!(f, "{}", output)
     }
@@ -246,7 +270,7 @@ impl NestedPageContent {
                 "placeholder" => NestedPageContent::PlaceHolder(attributes[0].clone()),
                 "other" => NestedPageContent::Other(attributes[0].clone()),
                 "resolved" => NestedPageContent::Resolved(attributes[0].clone()),
-                "calc" => NestedPageContent::Calc(Calculation::new(attributes)),
+                "calc" => NestedPageContent::Calc(Calculation::new(attributes)?),
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
 
@@ -1699,7 +1723,7 @@ This is a test page.
     #[test]
     fn calc_resolve_unresolved_operand() {
         let words = vec!["test", "+", "-19.2", "width"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
         
         let mut outcome = c.get_value();
         assert_eq!(CalculationValue::Unresolved, outcome);
@@ -1712,7 +1736,7 @@ This is a test page.
     #[test]
     fn calc_resolve_add_2() {
         let words = vec!["test", "+", "-19.2", "40"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         for _ in 0..2 {
             let outcome = c.get_value();
@@ -1723,7 +1747,7 @@ This is a test page.
     #[test]
     fn calc_resolve_multiply_4() {
         let words = vec!["test", "*", "2", "3", "4", "5"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(120_f64), outcome);
@@ -1732,7 +1756,7 @@ This is a test page.
     #[test]
     fn calc_resolve_subtract_none() {
         let words = vec!["test", "-"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(0_f64), outcome);
@@ -1741,7 +1765,7 @@ This is a test page.
     #[test]
     fn calc_resolve_subtract_1() {
         let words = vec!["test", "-", "18"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(18_f64), outcome);
@@ -1750,7 +1774,7 @@ This is a test page.
     #[test]
     fn calc_resolve_subtract_2() {
         let words = vec!["test", "-", "100.7", "20.3"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(80.4_f64), outcome);
@@ -1759,7 +1783,7 @@ This is a test page.
     #[test]
     fn calc_resolve_divide_3() {
         let words = vec!["test", "/", "30", "5", "2"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(3_f64), outcome);
@@ -1768,7 +1792,7 @@ This is a test page.
     #[test]
     fn calc_resolve_divide_by_zero() {
         let words = vec!["test", "/", "30", "0", "2"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Invalid(CalcError::DivisionByZero), outcome);
@@ -1777,7 +1801,7 @@ This is a test page.
     #[test]
     fn calc_resolve_min_4() {
         let words = vec!["test", "min", "30", "5.5", "-2", "500"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(-2_f64), outcome);
@@ -1786,7 +1810,7 @@ This is a test page.
     #[test]
     fn calc_resolve_min_1() {
         let words = vec!["test", "min", "30"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(30_f64), outcome);
@@ -1795,7 +1819,7 @@ This is a test page.
     #[test]
     fn calc_resolve_min_0() {
         let words = vec!["test", "min"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(f64::MAX), outcome);
@@ -1804,7 +1828,7 @@ This is a test page.
     #[test]
     fn calc_resolve_max_0() {
         let words = vec!["test", "max"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(f64::MIN), outcome);
@@ -1813,7 +1837,7 @@ This is a test page.
     #[test]
     fn calc_resolve_max_1() {
         let words = vec!["test", "max", "-13.333"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(-13.333_f64), outcome);
@@ -1822,7 +1846,7 @@ This is a test page.
     #[test]
     fn calc_resolve_max_2() {
         let words = vec!["test", "max", "100", "100.01"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(100.01_f64), outcome);
@@ -1831,7 +1855,7 @@ This is a test page.
     #[test]
     fn calc_resolve_abs_pos() {
         let words = vec!["test", "abs", "100"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(100_f64), outcome);
@@ -1840,7 +1864,7 @@ This is a test page.
     #[test]
     fn calc_resolve_abs_neg() {
         let words = vec!["test", "abs", "-100"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(100_f64), outcome);
@@ -1849,7 +1873,7 @@ This is a test page.
     #[test]
     fn calc_resolve_remainder_2() {
         let words = vec!["test", "%", "100", "7"];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(2_f64), outcome);
@@ -1858,10 +1882,91 @@ This is a test page.
     #[test]
     fn calc_resolve_remainder_1() {
         let words = vec!["test", "%", "73",];
-        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect());
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
 
         let outcome = c.get_value();
         assert_eq!(CalculationValue::Resolved(73_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_exp_positive_int() {
+        let words = vec!["test", "^", "5", "3"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(125_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_exp_negative_int() {
+        let words = vec!["test", "**", "4", "-1"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(0.25_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_exp_positive_fractal() {
+        let words = vec!["test", "pow", "81", ".5"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(9_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_exp_negative_fractal() {
+        let words = vec!["test", "exp", "100", "-.5"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(0.1_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_exp_series() {
+        let words = vec!["test", "^", "2", "4", ".5", ".5"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(2_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_sign_positive() {
+        let words = vec!["test", "sign", "5"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(1_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_sign_negative() {
+        let words = vec!["test", "sign", "-56.412"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(-1_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_sign_series() {
+        let words = vec!["test", "sign", "-56.412", "2", "-4.4"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(1_f64), outcome);
+    }
+
+    #[test]
+    fn calc_resolve_upper_case_operator() {
+        let words = vec!["test", "SIGN", "-56.412"];
+        let mut c = Calculation::new(words.iter().map(|w| w.to_string()).collect()).unwrap();
+
+        let outcome = c.get_value();
+        assert_eq!(CalculationValue::Resolved(-1_f64), outcome);
     }
 
     #[test]
@@ -2117,6 +2222,48 @@ Calculation outcome is: <+calc - / AAA BBB/>
         assert_eq!("No output name found.".to_string(), result.unwrap_err());
     }
 
+    #[test]
+    fn compose_flat_text_only() {
+        let page_source = "
+<+output testPage.htm/>
+<!doctype html>
+<html>
+<head>
+<title>Test page</title>
+</head>
+<body>
+Oh, never mind.
+</body>
+</html>
+".to_string();
+
+        let mut text_handler = MockTextHandler::new();
+        let client_name = OsStr::new("testPage.mpc");
+        text_handler.write_text(&client_name, page_source).unwrap();
+
+        let result = compose(&client_name, &mut text_handler);
+        assert!(result.is_ok());
+
+        let output = text_handler.read_text(&OsStr::new("testPage.htm")).unwrap();
+    
+        // Debug
+        // println!("Composed file:\n{}", &output);
+
+        let expected = "
+<!doctype html>
+<html>
+<head>
+<title>Test page</title>
+</head>
+<body>
+Oh, never mind.
+</body>
+</html>
+".trim().to_string();
+
+        assert_eq!(expected, output);
+}
+
     mod enveloppe_same_name {
         /* Given opening and closing marks of the form
          * <alpha and >alpha,
@@ -2134,12 +2281,10 @@ Calculation outcome is: <+calc - / AAA BBB/>
         use nom::{
             branch::alt,
             bytes::complete::{is_not, tag, take},
-            character::complete::alphanumeric1,
             combinator::{map, verify},
             error::Error,
-            IResult,
             multi::many0,
-            sequence::{preceded, terminated, tuple},
+            sequence::{preceded, tuple},
         };
 
         const OPEN_MARK: &str = "<";
