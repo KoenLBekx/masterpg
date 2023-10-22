@@ -1,8 +1,6 @@
-// TODO: Put tests of mod enveloppe in separate crate.
-// TODO: Add integration test on fn compose using a FileTextHandler.
-// TODO: Complete main.rs
-// TODO: Add documentation
+// TODO: Add documentation in code.
 // TODO: Change version to 1.0.0 after doing the same for tree_by_path and string_io_and_mock.
+// TODO?: Add a man page.
 // TODO?: Add more operators to Calculation. (See std::f64)
 //              round, floor, ceiling, trunc, ?(if 1 then 2 else 3)
 
@@ -242,16 +240,18 @@ enum NestedPageContent {
     PlaceHolder(String),
     Other(String),
     Resolved(String),
+    Comment,
 }
 impl NestedPageContent {
     fn new(words: &Vec<String>) -> Result<NestedPageContent, String> {
         if words.len() < 1 {
             Err("fn NestedPageContent::new expects at least one element in its words parameter.".to_string())
         } else {
-            let tag_type = words[0].as_str();
+            let tag_type_lower = words[0].to_lowercase();
+            let tag_type = tag_type_lower.as_str();
 
             let required_words: usize = match tag_type {
-                "main" => 1,
+                "main" | "comment" => 1,
                 "output" | "master" | "actual" | "placeholder" | "calc" | "other" | "resolved" => 2,
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
@@ -271,6 +271,7 @@ impl NestedPageContent {
                 "other" => NestedPageContent::Other(attributes[0].clone()),
                 "resolved" => NestedPageContent::Resolved(attributes[0].clone()),
                 "calc" => NestedPageContent::Calc(Calculation::new(attributes)?),
+                "comment" => NestedPageContent::Comment,
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
 
@@ -290,6 +291,7 @@ impl std::fmt::Display for NestedPageContent {
             NestedPageContent::Other(ref text) => format!("Other({})", &text[0..min(10, text.len())]),
             NestedPageContent::Calc(calculation) => calculation.to_string(),
             NestedPageContent::Resolved(ref word) => format!("Resolved({word})"),
+            NestedPageContent::Comment => "Comment".to_string(),
         };
 
         write!(f, "{}", output)
@@ -483,7 +485,7 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
                         add_content_to_root(&mut root, &path, NestedPageContent::new(&vec!["other".to_string(), text])?)?;
                     },
                     FlatPageContent::SelfContainedMPTag(words) => {
-                        match words[0].as_str() {
+                        match words[0].to_lowercase().as_str() {
                             "actual" => return Err("An <+actual ...>...</+actual> tag should have children, and shouldn't be self-contained like <+actual .../>.".to_string()),
                             _ => (),
                         }
@@ -493,8 +495,9 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
                     FlatPageContent::OpeningMPTag(words) => {
                         let new_cargo: NestedPageContent;
 
-                        match words[0].as_str() {
+                        match words[0].to_lowercase().as_str() {
                             "actual" => new_cargo = NestedPageContent::new(&words)?,
+                            "comment" => new_cargo = NestedPageContent::new(&words)?,
                             _ => return Err("Invalid non self-contained masterpage tag found.".to_string()),
                         }
 
@@ -502,8 +505,9 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
                     },
                     FlatPageContent::ClosingMPTag(word) => {
                         // Check if the the parent NestedPageContent is the same variant.
-                        let expected_variant = match word.as_str() {
+                        let expected_variant = match word.to_lowercase().as_str() {
                             "actual" => NestedPageContent::Actual("dummy".to_string()),
+                            "comment" => NestedPageContent::Comment,
                             _ => return Err("Invalid or unknown closing masterpage tag found.".to_string()),
                         };
 
@@ -853,8 +857,9 @@ fn content_tree_to_output_string(content_tree: &mut Node<NestedPageContent>) -> 
 
             match node.cargo {
                 NestedPageContent::Actual(_) => TraverseAction::SkipChildren,
+                NestedPageContent::Comment => TraverseAction::SkipChildren,
                 NestedPageContent::Other(ref content) => {
-                    accum.push_str(content.trim());
+                    accum.push_str(content);
                     TraverseAction::Continue
                 },
                 _ => TraverseAction::Continue,
@@ -2062,9 +2067,9 @@ Calculation outcome is: <+calc - / AAA BBB/>
 <+actual sub>10</+actual>
 <+calc AAA - start sub/>
 <+calc BBB min start 25/>
-";
+".replace("\n","");
 
-        let mut content_tree = read_nested_content(content_source_str).unwrap();
+        let mut content_tree = read_nested_content(content_source_str.as_str()).unwrap();
         resolve_references_in_content_tree(&mut content_tree).unwrap();
         let output = content_tree_to_output_string(&mut content_tree);
 
@@ -2079,9 +2084,9 @@ Calculation outcome is: <+calc - / AAA BBB/>
 </head>
 <body>Test page<br />
 This is a test page.<br />
-Calculation outcome is:2.4</body>
+Calculation outcome is: 2.4</body>
 </html>
-        ".trim().to_string();
+".replace("\n","");
 
         assert_eq!(expected, output);
     }
@@ -2092,21 +2097,22 @@ Calculation outcome is:2.4</body>
 <!doctype html>
 <html>
 <head>
+<+comment x>Keep it simple for now.</+comment>
 <title><+placeholder title/></title>
 </head>
 <body>
-<+placeholder page_content/>
+<+PLACEHOLDER page_content/>
 </body>
 </html>
-".trim();
+".replace("\n", "");
 
         let page_content_source ="
 <+master general.mpm/>
-<+output testPage.htm/>
+<+OUTPUT testPage.htm/>
 
 <+actual title>Test page</+actual>
 
-<+actual page_content>
+<+Actual page_content>
 <+placeholder title/><br />
 This is a test page.<br />
 Calculation outcome is: <+calc - / AAA BBB/>
@@ -2116,16 +2122,20 @@ Calculation outcome is: <+calc - / AAA BBB/>
 <+actual sub>10</+actual>
 <+calc AAA - start sub/>
 <+calc BBB min start 25/>
-".trim();
+".replace("\n", "");
 
         let master_name = OsStr::new("general.mpm");
         let client_name = OsStr::new("testPage.mpc");
 
         let mut text_handler = MockTextHandler::new();
-        text_handler.write_text(&master_name, master_source.to_string()).unwrap();
-        text_handler.write_text(&client_name, page_content_source.to_string()).unwrap();
+        text_handler.write_text(&master_name, master_source).unwrap();
+        text_handler.write_text(&client_name, page_content_source).unwrap();
 
         let result = compose(&client_name, &mut text_handler);
+
+        // Debug
+        // println!("Error = {}", result.unwrap_err());
+
         assert!(result.is_ok());
 
         let output = text_handler.read_text(&OsStr::new("testPage.htm")).unwrap();
@@ -2141,9 +2151,9 @@ Calculation outcome is: <+calc - / AAA BBB/>
 </head>
 <body>Test page<br />
 This is a test page.<br />
-Calculation outcome is:2.4</body>
+Calculation outcome is: 2.4</body>
 </html>
-".trim().to_string();
+".replace("\n", "").to_string();
 
         assert_eq!(expected, output);
     }
@@ -2263,407 +2273,4 @@ Oh, never mind.
 
         assert_eq!(expected, output);
 }
-
-    mod enveloppe_same_name {
-        /* Given opening and closing marks of the form
-         * <alpha and >alpha,
-         * checks if
-         * <a___>a
-         * is recognized as one entity, but not
-         * <a___>b
-         * while
-         * <a___<b___>b___>a
-         * is recognized as such again.
-         */
-
-        use std::cell::{Ref, RefCell};
-        use std::rc::Rc;
-        use nom::{
-            branch::alt,
-            bytes::complete::{is_not, tag, take},
-            combinator::{map, verify},
-            error::Error,
-            multi::many0,
-            sequence::{preceded, tuple},
-        };
-
-        const OPEN_MARK: &str = "<";
-        const CLOSE_MARK: &str = ">";
-        const NAME_LENGTH: u8 = 1;
-
-        #[derive(Debug)]
-        #[derive(PartialEq)]
-        enum Fragment<'a> {
-            OpenMark(&'a str),
-            CloseMark,
-            Other(&'a str),
-        }
-
-        use Fragment::{OpenMark, CloseMark, Other};
-
-        macro_rules! make_open_mark {
-            ($name_stack:expr, $is_first:expr) => {
-                map(
-                    verify(
-                        preceded(tag::<&str, &str, Error<&str>>(OPEN_MARK), take(NAME_LENGTH)),
-                        |name: &str| {
-                            match name {
-                                OPEN_MARK | CLOSE_MARK => false,
-                                _nm =>  {
-                                    if $is_first && ($name_stack.borrow().len() > 0) {
-                                        return false;
-                                    }
-
-                                    if (!$is_first) && ($name_stack.borrow().len() < 1) {
-                                        return false;
-                                    }
-
-                                    $name_stack.borrow_mut().push(name.to_string());
-
-                                    true
-                                },
-                            }
-                        }
-                    ),
-                    |name| OpenMark(name)
-                )
-            }
-        }
-
-        macro_rules! make_close_mark {
-            ($name_stack:expr, $is_last:expr) => {
-                map(
-                    verify(
-                        preceded(tag::<&str, &str, Error<&str>>(CLOSE_MARK), take(NAME_LENGTH)),
-                        |name: &str|
-                        {
-                            match name {
-                                OPEN_MARK | CLOSE_MARK => false,
-                                nm =>  {
-                                    let mut stack_mut = $name_stack.borrow_mut();
-
-                                    // println!("Before verify on close : name={}, name_stack={:?}", nm, stack_mut);
-
-                                    if $is_last && (stack_mut.len() != 1) {
-                                        return false;
-                                    }
-
-                                    if (!$is_last) && (stack_mut.len() < 2) {
-                                        return false;
-                                    }
-
-                                    match stack_mut.last() {
-                                        None => false,
-                                        Some(ref last_name) => {
-                                            if nm == last_name.as_str() {
-                                                stack_mut.pop();
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    ),
-                    |_| CloseMark
-                )
-            }
-        }
-
-        enum NestedContent {
-            Enveloppe(Rc<RefCell<Enveloppe>>),
-            Other(String),
-        }
-        impl std::fmt::Display for NestedContent {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let result: String = match self {
-                    // NestedContent::Enveloppe(ref env_cell) => EnveloppeCellWrapper{value: Rc::clone(&env_cell)}.to_string(),
-                    NestedContent::Enveloppe(ref env_cell) => env_cell.displayable().to_string(),
-                    NestedContent::Other(ref the_string) => the_string.clone(),
-                };
-
-                write!(f, "{}", result)
-            }
-        }
-
-        struct Enveloppe {
-            name: String,
-            children: Vec<NestedContent>,
-            is_open: bool,
-        }
-
-        trait EnveloppeCellFunctions {
-            fn create(name: String) -> Self;
-            fn close(&self);
-            fn add_fragment(&self, fragment: Fragment) -> Result<(), String>;
-            fn displayable(&self) -> EnveloppeCellWrapper;
-            fn replace_enveloppe_having_name_with_other(&self, env_name: &str, other_content: String) -> usize;
-        }
-
-        // Cfr. The Rust Book, Chapter 19.2, "Using the Newtype Pattern to Implement External Traits on External Types"
-        struct EnveloppeCellWrapper {
-            value: Rc<RefCell<Enveloppe>>
-        }
-        impl std::ops::Deref for EnveloppeCellWrapper {
-            type Target = Rc<RefCell<Enveloppe>>;
-
-            fn deref(&self) -> &Self::Target {
-                &self.value
-            }
-        }
-        impl std::fmt::Display for EnveloppeCellWrapper {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let enveloppe = self.value.borrow();
-                let result = format!(
-                    "{}{}{}{}{}",
-                    OPEN_MARK,
-                    enveloppe.name.clone(),
-                    enveloppe.children.iter().fold(String::new(), |acc, nested| {
-                        format!("{}{}", acc, nested.to_string())
-                    }),
-                    CLOSE_MARK,
-                    enveloppe.name.clone());
-
-                write!(f, "{}", result)
-            } 
-        }
-
-        impl EnveloppeCellFunctions for Rc<RefCell<Enveloppe>> {
-            fn create(name: String) -> Self {
-                Rc::new(RefCell::new(
-                    Enveloppe {
-                    children: Vec::new(),
-                    is_open: true,
-                    name,
-                }))
-            }
-
-            fn close(&self) {
-                self.borrow_mut().is_open = false;
-            }
-
-            fn displayable(&self) -> EnveloppeCellWrapper {
-                EnveloppeCellWrapper{value: Rc::clone(&self)}
-            }
-
-            fn add_fragment(&self, fragment: Fragment) -> Result<(), String> {
-                if !self.borrow().is_open {
-                   return Err(String::from("Can't add to a closed enveloppe."));
-                }
-
-                let mut last_open = Rc::clone(self);
-
-                loop {
-                    let last_open_clone: Rc<RefCell<Enveloppe>>;
-                    let last_open_env: Ref<Enveloppe>;
-                    last_open_clone = Rc::clone(&last_open);
-                    last_open_env = last_open_clone.borrow();
-
-                    let open_child = last_open_env.children.iter().find(|&nested| {
-                        match nested {
-                            NestedContent::Other(_) => false,
-                            NestedContent::Enveloppe(ref envlp) => envlp.borrow().is_open,
-                        }
-                    });
-
-                    match open_child {
-                        None => break,
-                        Some(nested) =>  {
-                            if let NestedContent::Enveloppe(ref envlp) = nested {
-                                last_open = Rc::clone(envlp);
-                            } else {
-                                panic!("Enveloppe.add_fragment: if an open enveloppe was found, a test on it being a NestedContent::Enveloppe shouldn't fail.");
-                            }
-                        }
-                    }
-                };
-
-                match fragment {
-                    OpenMark(name) => last_open.borrow_mut().children.push(NestedContent::Enveloppe(Rc::<RefCell<Enveloppe>>::create(name.to_string()))),
-                    Other(content) => last_open.borrow_mut().children.push(NestedContent::Other(content.to_string())),
-                    CloseMark => last_open.close(),
-                }
-
-                Ok(())
-            }
-
-            fn replace_enveloppe_having_name_with_other(&self, env_name: &str, other_content: String) -> usize {
-                let mut replaced: usize = 0;
-                let mut self_env = self.borrow_mut();
-
-                for i in 0..self_env.children.len() {
-                    replaced += match self_env.children[i] {
-                        NestedContent::Other(_) => 0,
-                        NestedContent::Enveloppe(ref nested_cell) => {
-                            if nested_cell.borrow().name == env_name {
-                                self_env.children[i] = NestedContent::Other(other_content.clone());
-
-                                1
-                            } else {
-                                let nested_env = Rc::clone(nested_cell);
-
-                                nested_env.replace_enveloppe_having_name_with_other(env_name, other_content.clone())
-                            }
-                        },
-                    }
-                }
-
-                replaced
-            }
-        }
-
-        #[test]
-        fn nom_open_close_same_name() {
-            let name_stack: RefCell<Vec<String>> = RefCell::new(Vec::new());
-            
-            let mut open_mark_first = make_open_mark!(name_stack, true);
-            let open_mark_nested = make_open_mark!(name_stack, false);
-
-            assert_eq!(Ok(("12", OpenMark("a"))), open_mark_first("<a12"));
-
-            let mut close_mark_last = make_close_mark!(name_stack, true);
-            let close_mark_nested = make_close_mark!(name_stack, false);
-
-            assert_eq!(Ok(("zz", CloseMark)), close_mark_last(">azz"));
-
-            let mut enveloppe = map(
-                tuple((
-                    open_mark_first,
-                    many0(alt((
-                        map(is_not("<>"), |other| Fragment::Other(other)),
-                        open_mark_nested,
-                        close_mark_nested,
-                    ))),
-                    close_mark_last
-                )),
-                |tp|
-                {
-                    let result: Rc<RefCell<Enveloppe>>;
-
-                    if let OpenMark(name) = tp.0 {
-                        result = Rc::<RefCell<Enveloppe>>::create(name.to_string());
-                    } else {
-                        panic!("The output of open_mark_first should be a Fragment::OpenMark.");
-                    }
-
-                    for fragment in tp.1 {
-                        result.add_fragment(fragment).unwrap();
-                    }
-
-                    result.close();
-
-                    result
-                }
-            );
-
-            name_stack.borrow_mut().clear();
-            let found_enveloppe = enveloppe("<x_-_-_>x").unwrap().1;
-
-            // Ensure we can do .to_string() twice (so it's non-consuming).
-            for _i in 0..2 {
-                assert_eq!(
-                    "<x_-_-_>x".to_string(),
-                    found_enveloppe.displayable().to_string()
-                );
-            }
-
-            name_stack.borrow_mut().clear();
-            assert_eq!(
-                "<x_<x_>x>x".to_string(),
-                enveloppe("<x_<x_>x>x").unwrap().1.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            assert_eq!(
-                "<x>x".to_string(),
-                enveloppe("<x>x").unwrap().1.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            assert_eq!(
-                "<x_<y->y_>x".to_string(),
-                enveloppe("<x_<y->y_>x").unwrap().1.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            assert_eq!(
-                "<x_<y->y_>x".to_string(),
-                enveloppe("<x_<y->y_>x---<a--->a").unwrap().1.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("___<").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("<<___><").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("<x___").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe(">x").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("<x___>y").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("<x__<x__>x").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("<x__<z__>x").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("<x__>z__>x").is_err());
-
-            name_stack.borrow_mut().clear();
-            assert!(enveloppe("<x__<z__>x__>z").is_err());
-
-            name_stack.borrow_mut().clear();
-            let env_cell = enveloppe("<a___>a").unwrap().1;
-            let r = env_cell.replace_enveloppe_having_name_with_other("b", "replaced".to_string());
-            assert_eq!(0usize, r);
-            assert_eq!(
-                "<a___>a".to_string(),
-                env_cell.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            let env_cell = enveloppe("<a<b>b>a").unwrap().1;
-            let r = env_cell.replace_enveloppe_having_name_with_other("b", "replaced".to_string());
-            assert_eq!(1usize, r);
-            assert_eq!(
-                "<areplaced>a".to_string(),
-                env_cell.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            let env_cell = enveloppe("<a_<b_>b_<c_<b_>b_>c_>a").unwrap().1;
-            let r = env_cell.replace_enveloppe_having_name_with_other("b", "!".to_string());
-            assert_eq!(2usize, r);
-            assert_eq!(
-                "<a_!_<c_!_>c_>a".to_string(),
-                env_cell.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            let env_cell = enveloppe("<a_<b_>b_<c_<b_<b_>b_>b_>c_>a").unwrap().1;
-            let r = env_cell.replace_enveloppe_having_name_with_other("b", "!".to_string());
-            assert_eq!(2usize, r);
-            assert_eq!(
-                "<a_!_<c_!_>c_>a".to_string(),
-                env_cell.displayable().to_string()
-            );
-
-            name_stack.borrow_mut().clear();
-            let env_cell = enveloppe("<a_<b_>b_<c_<b_>b_>c_>a").unwrap().1;
-            let r = env_cell.replace_enveloppe_having_name_with_other("z", "!".to_string());
-            assert_eq!(0usize, r);
-            assert_eq!(
-                "<a_<b_>b_<c_<b_>b_>c_>a".to_string(),
-                env_cell.displayable().to_string()
-            );
-        }
-    }
 }

@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 string_io_and_mock = { version = "1.0.0", path = "../string_io_and_mock" }
 nom = { version = "7.1.3", features = ["alloc"] }
-tree_by_path = { version = "0.5.0", path = "../tree_by_path" }
+tree_by_path = { version = "0.6.0", path = "../tree_by_path" }
+serial_test = { version = "2.0.0", features = ["file_locks"] }

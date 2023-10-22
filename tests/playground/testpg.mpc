@@ -1,0 +1,9 @@
+
+<+master tests/playground/general.mpx/>
+<+output tests/playground/index.htm/>
+<+actual pageContent>
+<p>Welcome to my <+placeholder siteName/> site !</p>
+<p>I'm <+placeholder author/> and I'm just testing the masterpg module.</p>
+<p>Bye for now !</p>
+</+actual>
+<+actual pageTitle>Welcome</+actual>
