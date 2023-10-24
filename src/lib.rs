@@ -10,7 +10,7 @@
 //! `pub fn compose` composes files - usually static HTML files - as an alternative to a missing
 //! `<include />` tag in HTML.
 //! 
-//! It processes six kinds of tags in input files :
+//! It processes seven kinds of tags in input files :
 //! 
 //! > `<+output file_path/>` :
 //! >> indicates to which file the result of the composition operation has to be written.
@@ -27,6 +27,10 @@
 //! 
 //! > `<+comment>`...`</comment>` :
 //! >> will be removed from the output.
+//!
+//! > `<+timestamp/>` :
+//! >> produces a timestamp in the form of `ts=16548548678647` in the output text. The digits are
+//! the number of milliseconds elapsed since the start of the Unix epoch.
 //! 
 //! > `<+calc tag_name [operator] [operand1] [operand2] [operand3] ... />` :
 //! >> performs a calculation : it applies the operator +, -, *, / or others on one or more operands.
@@ -190,12 +194,13 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::mem::discriminant;
 use std::str::FromStr;
+use std::time::SystemTime;
 use nom::{
     branch::alt,
     bytes::complete::{is_a, is_not, tag},
     combinator::{map, opt, peek},
     IResult,
-    multi::{many0, many1, separated_list0},
+    multi::{many0, many1},
     sequence::{delimited, pair, preceded, terminated}
 };
 use string_io_and_mock::TextIOHandler;
@@ -465,6 +470,7 @@ enum NestedPageContent {
     PlaceHolder(String),
     Other(String),
     Resolved(String),
+    Timestamp,
     Comment,
 }
 impl NestedPageContent {
@@ -476,7 +482,7 @@ impl NestedPageContent {
             let tag_type = tag_type_lower.as_str();
 
             let required_words: usize = match tag_type {
-                "main" | "comment" => 1,
+                "main" | "comment" | "timestamp" => 1,
                 "output" | "master" | "actual" | "placeholder" | "calc" | "other" | "resolved" => 2,
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
@@ -496,6 +502,7 @@ impl NestedPageContent {
                 "other" => NestedPageContent::Other(attributes[0].clone()),
                 "resolved" => NestedPageContent::Resolved(attributes[0].clone()),
                 "calc" => NestedPageContent::Calc(Calculation::new(attributes)?),
+                "timestamp" => NestedPageContent::Timestamp,
                 "comment" => NestedPageContent::Comment,
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
@@ -516,6 +523,7 @@ impl std::fmt::Display for NestedPageContent {
             NestedPageContent::Other(ref text) => format!("Other({})", &text[0..min(10, text.len())]),
             NestedPageContent::Calc(calculation) => calculation.to_string(),
             NestedPageContent::Resolved(ref word) => format!("Resolved({word})"),
+            NestedPageContent::Timestamp => "Timestamp".to_string(),
             NestedPageContent::Comment => "Comment".to_string(),
         };
 
@@ -545,29 +553,28 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
         terminated(tag("<+"), opt(whitespace)),
         map(
             pair(
-                terminated(
-                    is_not(" \t\n\r/><"),
-                    is_a(" \t\n\r")
-                ),
-                separated_list0(
-                    is_a(" \t\n\r"),
-                    map(
-                        many0(
-                            alt((
-                                is_not(" \t\n\r/><"),
-                                terminated(tag("/"), peek(is_not(">")))
-                            ))
-                        ),
-                        |list: Vec<&str>|
-                        {
-                            let mut result_str = String::new();
+                is_not(" \t\n\r/><"),
+                many0(
+                    preceded(
+                        is_a(" \t\n\r"),
+                        map(
+                            many0(
+                                alt((
+                                    is_not(" \t\n\r/><"),
+                                    terminated(tag("/"), peek(is_not(">")))
+                                ))
+                            ),
+                            |list: Vec<&str>|
+                            {
+                                let mut result_str = String::new();
 
-                            for elem in list {
-                                result_str.push_str(elem);
+                                for elem in list {
+                                    result_str.push_str(elem);
+                                }
+
+                                result_str
                             }
-
-                            result_str
-                        }
+                        )
                     )
                 ),
             ),
@@ -1076,7 +1083,7 @@ fn content_tree_to_output_string(content_tree: &mut Node<NestedPageContent>) -> 
     content_tree.traverse(
         String::new(),
         |accum, node, _path| {
-            // Skip actual nodes entirely,
+            // Skip actual and comment nodes entirely,
             // because they can contain Other and Resolved nodes
             // that shouldn't be enclosed in the output.
 
@@ -1085,6 +1092,18 @@ fn content_tree_to_output_string(content_tree: &mut Node<NestedPageContent>) -> 
                 NestedPageContent::Comment => TraverseAction::SkipChildren,
                 NestedPageContent::Other(ref content) => {
                     accum.push_str(content);
+                    TraverseAction::Continue
+                },
+                NestedPageContent::Timestamp => {
+                    let duration = loop {
+                        match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                            Ok(dur) => break dur,
+                            Err(_) => (),
+                        }
+                    };
+
+                    accum.push_str("ts=");
+                    accum.push_str(&duration.as_millis().to_string());
                     TraverseAction::Continue
                 },
                 _ => TraverseAction::Continue,
@@ -1096,6 +1115,10 @@ fn content_tree_to_output_string(content_tree: &mut Node<NestedPageContent>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nom::{
+        bytes::complete::{is_a, tag},
+        sequence::tuple,
+    };
     use string_io_and_mock::MockTextHandler;
     use tree_by_path::Node;
 
@@ -2397,6 +2420,7 @@ e-mail: gencalogero@famous_server.com<br />
 <+actual page_content>
 <+placeholder title/><br />
 This is a test page.<br />
+<+comment>This is just any calculation.</+comment>
 Calculation outcome is: <+calc - / AAA BBB/>
 </+actual>
 <+actual start>70</+actual>
@@ -2428,12 +2452,44 @@ Calculation outcome is: 2.4</body>
     }
 
     #[test]
+    fn tree_to_output_timestamp() {
+        let content_source_str =
+            "OK then, the timestamp is : <+timestamp/>. Happy now ?";
+
+        let mut content_tree = read_nested_content(content_source_str).unwrap();
+        let output = content_tree_to_output_string(&mut content_tree);
+
+        /* Compiles also, but the nested function below looks cleaner.
+            let begin = "OK then, the timestamp is : ts=";
+            let end = ". Happy now ?";
+
+            let mut parser = tuple((
+                tag::<&str, &str, nom::error::Error<&str>>(begin),
+                is_a("0123456789"),   
+                tag::<&str, &str, nom::error::Error<&str>>(end),
+            ));
+        */
+
+        fn parser(input: &str) -> nom:: IResult<&str, (&str, &str, &str)> {
+            tuple((
+                tag("OK then, the timestamp is : ts="),
+                is_a("0123456789"),   
+                tag(". Happy now ?"),
+            ))(input)
+        }
+
+        let parse_result = parser(output.as_str());
+
+        assert!(parse_result.is_ok());
+    }
+
+    #[test]
     fn compose_with_master() {
         let master_source = "
 <!doctype html>
 <html>
 <head>
-<+comment x>Keep it simple for now.</+comment>
+<+comment>Keep it simple for now.</+comment>
 <title><+placeholder title/></title>
 </head>
 <body>
@@ -2608,5 +2664,5 @@ Oh, never mind.
 ".trim().to_string();
 
         assert_eq!(expected, output);
-}
+    }
 }
