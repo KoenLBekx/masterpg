@@ -3,27 +3,30 @@
 //{ Documentation
 //! # `masterpg` utility
 //!
-//! `fn main` in src/main.rs<br >
+//! `fn main` in src/main.rs (the command-line utility)<br >
 //! calls<br />
-//! `pub fn compose` in src/lib.rs.
+//! `pub fn compose` in src/lib.rs (the library function).
 //!
 //! `pub fn compose` composes files - usually static HTML files - as an alternative to a missing
 //! `<include />` tag in HTML.
+//!
+//! Both the command-line utility and the library function are meant to be used web-server-side or during the publishing phase of web pages, albeit they
+//! can compose any kind of files.
 //! 
-//! It processes seven kinds of tags in input files :
+//! They process seven kinds of tags in input files :
 //! 
 //! > `<+output file_path/>` :
 //! >> indicates to which file the result of the composition operation has to be written.
 //! 
 //! > `<+master file_path/>` :
 //! >> indicates that a file having the given path is to be used as master page. If the file path doesn't contain a full path, it is considered to be relative to  the current active directory.<br />
-//! An input file can contain more than one `<+master ...>` tag.
+//! An input file can contain more than one `<+master ...>` tags.
 //!
 //! > `<+placeholder tag_name/>` :
 //! >> indicates that this placeholder has to be replaced by the content of an `<+actual>` tag having the same tag name.
 //!
 //! > `<+actual tag_name>`...`</+actual>` :
-//! >> the actual content to replace a placeholder having the same tag name.
+//! >> the actual content to replace placeholders with having the same tag name.
 //! 
 //! > `<+comment>`...`</comment>` :
 //! >> will be removed from the output.
@@ -39,7 +42,7 @@
 //!
 //! ## Calculations
 //!
-//! The operands of a `<+calc  ... /` tag can be either
+//! The operands of a `<+calc  ... />` tag can be either
 //! - literal numerical values, or else
 //! - tag names that refer to other `<+calc tag_name .../>` tags or `<+actual tag_name>` tags
 //! having that tag name.
@@ -111,8 +114,9 @@
 //!     - then reading an input file in a string and replacing all `<+master />`-tags in this string with the content of the entire file indicated, and even doing this recursively, so even master page files can contain their own `<+master />`-tags;
 //! 
 //!     - then, in the resulting string, replacing
-//!         - all `<+calc>` tags with `<+actual>` tags holding the calculated value.
-//!         - replacing all `<+placeholder>` tags with the content of the corresponding `<+actual>` tags;
+//!         - all `<+calc>` tags with `<+actual>` tags holding the calculated value;
+//!         - all `<+placeholder>` tags with the content of the corresponding `<+actual>` tags;
+//!         - all `<timestamp/>` tags with a timestamp;
 //! 
 //!     - then, removing all the `<+...>` tags (should only be +comment, +output and +actual);
 //! 
@@ -145,25 +149,27 @@
 //! `<+master consts.mpm/>`<br />
 //! `<!doctype html>`<br />
 //! `<html>`<br />
-//! `<head>`<br />
-//! `<title><+placeholder pageTitle/></title>`<br />
-//! `</head>`<br />
-//! `<body>`<br />
-//! `<h1><+placeholder pageTitle/></h1>`<br />
-//! `<i>by <+placeholder author/></i>`<br />
-//! `<div id="main"><+placeholder pageContent/></div>`<br />
-//! `</body>`<br />
+//! `   <head>`<br />
+//! `       <title><+placeholder pageTitle/></title>`<br />
+//! `   </head>`<br />
+//! `   <body>`<br />
+//! `       <h1><+placeholder pageTitle/></h1>`<br />
+//! `       <i>by <+placeholder author/></i>`<br />
+//! `       <div id="main"><+placeholder pageContent/></div>`<br />
+//! `   </body>`<br />
 //! `</html>`
 //!
 //! ### Given testpg.mpc :
 //! 
 //! `<+master general.mpx/>`<br />
 //! `<+output index.htm/>`<br />
+//! <br />
 //! `<+actual pageContent>`<br />
 //! `<p>Welcome to my <+placeholder siteName/> site !</p>`<br />
 //! `<p>I'm <+placeholder author/> and I'm just testing the masterpg module.</p>`<br />
 //! `<p>Bye for now !</p>`<br />
 //! `</+actual>`<br />
+//! <br />
 //! `<+actual pageTitle>Welcome</+actual>`
 //! 
 //! ### Then the command
@@ -174,18 +180,18 @@
 //! 
 //! `<!doctype html>`<br />
 //! `<html>`<br />
-//! `<head>`<br />
-//! `<title>Welcome</title>`<br />
-//! `</head>`<br />
-//! `<body>`<br />
-//! `<h1>Welcome</h1>`<br />
-//! `<i>by Lenny Baxter</i>`<br />
-//! `<div id="main">`<br />
-//! `<p>Welcome to my Test Pages site !</p>`<br />
-//! `<p>I'm Lenny Baxter and I'm just testing the masterpg module.</p>`<br />
-//! `<p>Bye for now !</p>`<br />
-//! `</div>`<br />
-//! `</body>`<br />
+//! `   <head>`<br />
+//! `       <title>Welcome</title>`<br />
+//! `   </head>`<br />
+//! `   <body>`<br />
+//! `       <h1>Welcome</h1>`<br />
+//! `       <i>by Lenny Baxter</i>`<br />
+//! `       <div id="main">`<br />
+//! `           <p>Welcome to my Test Pages site !</p>`<br />
+//! `           <p>I'm Lenny Baxter and I'm just testing the masterpg module.</p>`<br />
+//! `           <p>Bye for now !</p>`<br />
+//! `       </div>`<br />
+//! `   </body>`<br />
 //! `</html>`
 //}
 
@@ -676,7 +682,7 @@ fn read_flat_content(input: &str) -> Result<Vec<FlatPageContent>, String> {
 }
 
 fn add_content_to_root(root: &mut Node<NestedPageContent>, path: &Vec<usize>, content: NestedPageContent) -> Result<Vec<usize>, String> {
-    match root.add_cargo_under(path, content) {
+    match root.add_cargo_under_path(path, content) {
         Ok(added_path) => Ok(added_path),
         Err((err, _)) => Err(format!("{:?}", err)),
     }
@@ -782,7 +788,7 @@ where Tioh: TextIOHandler {
     // Resolve all master tags by replacing them with resolved tags containing their referenced file's contents.
     loop {
         // Get all master files as trees.
-        let master_trees_result = content_tree.traverse(
+        let master_trees_result = content_tree.traverse_mut(
             Ok(Vec::<Node<NestedPageContent>>::new()),
             |trees_result: &mut Result<Vec<Node<NestedPageContent>>, String>, node, _path|{
                 let mut do_go_on = true;
@@ -838,7 +844,7 @@ where Tioh: TextIOHandler {
 
                 // Prepend all found master trees to the content tree's children.
                 for master_tree in master_trees {
-                    match content_tree.add_node_before(&vec![0], master_tree) {
+                    match content_tree.add_node_before_path(&vec![0], master_tree) {
                         Ok(_) => (),
                         Err(path_error) => return Err(format!("Programming error in fn resolve_masters_in_tree : {:?}", path_error)),
                     }
@@ -952,7 +958,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
         );
 
         // Resolve placeholders and calc operands that can already be resolved.
-        let (unresolved_count, resolved_count) = content_tree.traverse(
+        let (unresolved_count, resolved_count) = content_tree.traverse_mut(
             (0, 0),
             |counts, node, _path| {
                 match node.cargo {
@@ -1438,7 +1444,7 @@ mod tests {
     #[test]
     fn read_flat_content_only_other() {
         let test_content = "<!doctype html><html><head></head><body><h1>Test page</h1></body></html>";
-        let result = read_flat_content(test_content.clone());
+        let result = read_flat_content(test_content);
         assert!(result.is_ok());
         let contents = result.unwrap();
         assert_eq!(vec![FlatPageContent::Other(test_content.to_string())], contents);
@@ -1459,7 +1465,7 @@ mod tests {
 
         let test_content = test_content_string.as_str();
 
-        let result = read_flat_content(test_content.clone());
+        let result = read_flat_content(test_content);
         assert!(result.is_ok());
         let contents = result.unwrap();
         assert_eq!(8, contents.len());
@@ -1494,7 +1500,7 @@ mod tests {
 
         let test_content = test_content_string.as_str();
 
-        let result = read_flat_content(test_content.clone());
+        let result = read_flat_content(test_content);
         assert!(result.is_err());
 
         // Debug
