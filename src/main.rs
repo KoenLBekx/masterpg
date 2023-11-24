@@ -6,7 +6,7 @@ use string_io_and_mock::FileTextHandler;
 fn main() {
     let sources = &args_os().collect::<Vec<OsString>>()[1..];
 
-    if sources.len() == 0 {
+    if sources.is_empty() {
         show_usage();
         return;
     }

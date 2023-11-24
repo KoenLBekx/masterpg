@@ -303,7 +303,9 @@ checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
 
 [[package]]
 name = "string_io_and_mock"
-version = "1.0.0"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9d8c19e5192f1e74b12f46b2c9e4a41a67470307ae5b934c683c0fb07cdeb11"
 dependencies = [
  "serial_test",
 ]
@@ -321,7 +323,9 @@ dependencies = [
 
 [[package]]
 name = "tree_by_path"
-version = "1.0.0"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17a2cbefcddcb4013c348f4b7fe289df3f523c433828b42b36f351d03c2a89a"
 
 [[package]]
 name = "unicode-ident"

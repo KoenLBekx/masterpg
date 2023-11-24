@@ -221,13 +221,14 @@ where Tioh: TextIOHandler {
     content_tree = resolve_masters_in_tree(io_handler, content_tree)?;
 
     let recursions = find_recursion_in_content_tree(&mut content_tree);
-    if recursions.len() > 0 {
+
+    if !recursions.is_empty() {
         return Err(
             format!("{} {} {:?}.",
                 "Recursion found in <+placeholder> or <+calc.../>",
                 "tags referring to",
                 recursions
-            ).replace("[", "").replace("]","")
+            ).replace('[', "").replace(']',"")
         );
     }
 
@@ -239,7 +240,7 @@ where Tioh: TextIOHandler {
 
     let output = content_tree_to_output_string(&mut content_tree);
 
-    match io_handler.write_text(&output_name, output) {
+    match io_handler.write_text(output_name, output) {
         Ok(_) => Ok(()),
         Err(err) => Err(err.to_string())
     }
@@ -252,7 +253,7 @@ enum Operand {
 }
 impl Operand {
     pub fn new(source: String) -> Self {
-        let parse_result = f64::from_str(source.replace(",", ".").as_str());
+        let parse_result = f64::from_str(source.replace(',', ".").as_str());
 
         match parse_result {
             Ok(num) => Operand::Value(num),
@@ -291,7 +292,7 @@ impl std::fmt::Display for CalcError {
             CalcError::OutOfBounds => "OutOfBounds".to_string(),
             CalcError::NotANumber => "NotANumber".to_string(),
             CalcError::DivisionByZero => "DivisionByZero".to_string(),
-            CalcError::UnknownOperator(opr) => format!("UnknownOperator: '{}'", opr.to_string()),
+            CalcError::UnknownOperator(opr) => format!("UnknownOperator: '{}'", opr),
         };
 
         write!(f, "{}", output)
@@ -334,8 +335,8 @@ impl Calculation {
     fn new(words: Vec<String>) -> Result<Self, String> {
         let mut opds = Vec::<Operand>::new();
 
-        for i in 2..words.len() {
-            opds.push(Operand::new(words[i].clone()));
+        for word in words.iter().skip(2) {
+            opds.push(Operand::new(word.clone()));
         }
 
         let opr_string = words[1].to_lowercase();
@@ -360,7 +361,7 @@ impl Calculation {
 
         Ok(Calculation {
             name: words[0].clone(),
-            operator: operator,
+            operator,
             operands: opds,
             outcome: CalculationValue::Unresolved,
         })
@@ -396,7 +397,7 @@ impl Calculation {
                 let opds: Vec<f64> = self.operands.iter()
                     .map(|opd| opd.get_value_or_default(default_val)).collect();
 
-                if self.operands.len() == 0 {
+                if self.operands.is_empty() {
                     return CalculationValue::Resolved(default_val);
                 }
 
@@ -432,10 +433,9 @@ impl Calculation {
                     };
                 }
 
-                // Matching against floats will cause a compiler error in later versions of Rust.
-                let result = if calc_outcome == f64::INFINITY {
-                    CalculationValue::Invalid(CalcError::OutOfBounds)
-                } else if calc_outcome == f64::NEG_INFINITY {
+                // Matching against floats will cause a compiler error in later versions of Rust,
+                // so we have to use an if-test.
+                let result = if calc_outcome.is_infinite() {
                     CalculationValue::Invalid(CalcError::OutOfBounds)
                 } else if calc_outcome.is_nan() {
                     CalculationValue::Invalid(CalcError::NotANumber)
@@ -454,7 +454,7 @@ impl std::fmt::Display for Calculation {
         let operands = self.operands.iter()
             .fold(String::new(), |mut accum, opd| {
                 let opstr = opd.to_string();
-                accum.push_str(" ");
+                accum.push(' ');
                 accum.push_str(opstr.as_str());
                 accum
             }
@@ -481,7 +481,7 @@ enum NestedPageContent {
 }
 impl NestedPageContent {
     fn new(words: &Vec<String>) -> Result<NestedPageContent, String> {
-        if words.len() < 1 {
+        if words.is_empty() {
             Err("fn NestedPageContent::new expects at least one element in its words parameter.".to_string())
         } else {
             let tag_type_lower = words[0].to_lowercase();
@@ -497,7 +497,8 @@ impl NestedPageContent {
                 return Err(format!("Insufficient attributes in masterpage tag {}", tag_type).to_string());
             }
 
-            let attributes: Vec<String> = words[1..].iter().map(|word| word.clone()).collect();
+            // to_vec() clones the words.
+            let attributes: Vec<String> = words[1..].to_vec();
 
             let new_content = match tag_type {
                 "main" => NestedPageContent::Main,
@@ -590,7 +591,7 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
                 result_vec.push(first.to_string());
 
                 for elem in list {
-                    if elem.len() > 0 {
+                    if !elem.is_empty() {
                         result_vec.push(elem);
                     }
                 }
@@ -688,7 +689,7 @@ fn add_content_to_root(root: &mut Node<NestedPageContent>, path: &Vec<usize>, co
     }
 }
 
-fn borrow_content_from_root<'r, 'p>(root: &'r Node<NestedPageContent>, path: &'p Vec<usize>) -> Result<&'r NestedPageContent, String> {
+fn borrow_content_from_root<'r>(root: &'r Node<NestedPageContent>, path: &Vec<usize>) -> Result<&'r NestedPageContent, String> {
     match root.borrow_cargo(path) {
         Ok(cargo) => Ok(cargo),
         Err(err) => Err(format!("{:?}", err)), 
@@ -700,44 +701,28 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
         Err(err) => Err(err),
         Ok(flat_contents) => {
 
-            /*
-            #[cfg(test)]
-            println!("{:#?}", &flat_contents);
-            */
-
             let mut root = Node::new(NestedPageContent::new(&vec!["main".to_string()])?);
             let mut path = root.get_first_path();
 
             for flat_content in flat_contents {
-
-                /*
-                #[cfg(test)]
-                {
-                    println!("----------------------------------------");
-                    println!("{:#?}", &root);
-                }
-                */
 
                 match flat_content {
                     FlatPageContent::Other(text) => {
                         add_content_to_root(&mut root, &path, NestedPageContent::new(&vec!["other".to_string(), text])?)?;
                     },
                     FlatPageContent::SelfContainedMPTag(words) => {
-                        match words[0].to_lowercase().as_str() {
-                            "actual" => return Err("An <+actual ...>...</+actual> tag should have children, and shouldn't be self-contained like <+actual .../>.".to_string()),
-                            _ => (),
+                        if words[0].to_lowercase().as_str() == "actual" {
+                            return Err("An <+actual ...>...</+actual> tag should have children, and shouldn't be self-contained like <+actual .../>.".to_string());
                         }
 
                         add_content_to_root(&mut root, &path, NestedPageContent::new(&words)?)?;
                     },
                     FlatPageContent::OpeningMPTag(words) => {
-                        let new_cargo: NestedPageContent;
-
-                        match words[0].to_lowercase().as_str() {
-                            "actual" => new_cargo = NestedPageContent::new(&words)?,
-                            "comment" => new_cargo = NestedPageContent::new(&words)?,
+                        let new_cargo = match words[0].to_lowercase().as_str() {
+                            "actual" => NestedPageContent::new(&words)?,
+                            "comment" => NestedPageContent::new(&words)?,
                             _ => return Err("Invalid non self-contained masterpage tag found.".to_string()),
-                        }
+                        };
 
                         path = add_content_to_root(&mut root, &path, new_cargo)?;
                     },
@@ -750,11 +735,6 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
                         };
 
                         let parent = borrow_content_from_root(&root, &path)?;
-
-                        /*
-                        #[cfg(test)]
-                        println!("========== Parent node's cargo : {:?}", &parent);
-                        */
 
                         if discriminant(&expected_variant) != discriminant(parent) {
                             return Err("Incorrectly paired opening and closing masterpage tags found.".to_string());
@@ -793,42 +773,39 @@ where Tioh: TextIOHandler {
             |trees_result: &mut Result<Vec<Node<NestedPageContent>>, String>, node, _path|{
                 let mut do_go_on = true;
 
-                match node.cargo {
-                    NestedPageContent::Master(ref name) => {
-                        match read_text_from_handler(io_handler, &OsStr::new(name)) {
-                            Ok(master_text) => {
-                                match read_nested_content(master_text.as_str()) {
-                                    Ok(master_tree) =>  {
-                                        match trees_result {
-                                            Ok(ref mut trees) => {
-                                                trees.push(master_tree);
+                if let NestedPageContent::Master(ref name) = node.cargo {
+                    match read_text_from_handler(io_handler, OsStr::new(name)) {
+                        Ok(master_text) => {
+                            match read_nested_content(master_text.as_str()) {
+                                Ok(master_tree) =>  {
+                                    match trees_result {
+                                        Ok(ref mut trees) => {
+                                            trees.push(master_tree);
 
-                                                let resolved = NestedPageContent::new(&vec!["resolved".to_string(), name.clone()]);
-                                                match resolved {
-                                                    Ok(rslv) => node.cargo = rslv,
-                                                    Err(err) => {
-                                                        do_go_on = false;
-                                                        *trees_result = Err(err)
-                                                    },
-                                                }
-                                            },
-                                            // Should never occur, but we'll cover this anyway.
-                                            Err(_) => do_go_on = false,
-                                        }
-                                    },
-                                    Err(err) => {
-                                        do_go_on = false;
-                                        *trees_result = Err(err);
-                                    },
-                                }
-                            },
-                            Err(err) => {
-                                do_go_on = false;
-                                *trees_result = Err(format!("Master file '{}' couldn't be read : {}.", name, err));
-                            },
-                        }
-                    },
-                    _ => (),
+                                            let resolved = NestedPageContent::new(&vec!["resolved".to_string(), name.clone()]);
+                                            match resolved {
+                                                Ok(rslv) => node.cargo = rslv,
+                                                Err(err) => {
+                                                    do_go_on = false;
+                                                    *trees_result = Err(err)
+                                                },
+                                            }
+                                        },
+                                        // Should never occur, but we'll cover this anyway.
+                                        Err(_) => do_go_on = false,
+                                    }
+                                },
+                                Err(err) => {
+                                    do_go_on = false;
+                                    *trees_result = Err(err);
+                                },
+                            }
+                        },
+                        Err(err) => {
+                            do_go_on = false;
+                            *trees_result = Err(format!("Master file '{}' couldn't be read : {}.", name, err));
+                        },
+                    }
                 }
 
                 if do_go_on {TraverseAction::Continue} else {TraverseAction::Stop}
@@ -838,7 +815,7 @@ where Tioh: TextIOHandler {
         match master_trees_result {
             Err(err) => return Err(err),
             Ok(master_trees) => {
-                if master_trees.len() == 0 {
+                if master_trees.is_empty() {
                     break;
                 }
 
@@ -887,7 +864,7 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
         let has_recursion = parent_node.traverse(
             false,
             |accum, node, path| {
-                if path.len() > 0 {
+                if !path.is_empty() {
                     match node.cargo {
                         NestedPageContent::PlaceHolder(ref word) => *accum = *word == parent_name,
                         NestedPageContent::Calc(ref calculation) => {
@@ -906,7 +883,7 @@ fn find_recursion_in_content_tree(content_tree: &mut Node<NestedPageContent>) ->
         );
 
         if has_recursion {
-            (&mut recursives).push(parent_name.clone());
+            recursives.push(parent_name.clone());
         }
     }
 
@@ -946,11 +923,8 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
         actuals = content_tree.traverse(
             actuals,
             |acts, node, _path| {
-                match node.cargo {
-                    NestedPageContent::Actual(ref name) => {
-                        acts.entry(name.clone()).or_insert((*node).clone());
-                    },
-                    _ => (),
+                if let NestedPageContent::Actual(ref name) = node.cargo {
+                    acts.entry(name.clone()).or_insert((*node).clone());
                 }
 
                 TraverseAction::Continue
@@ -965,7 +939,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                     NestedPageContent::PlaceHolder(ref name) => {
                         match actuals.get(name) {
                             None => counts.0 += 1,
-                            Some(ref actual_node) => {
+                            Some(actual_node) => {
                                 counts.1 += 1;
                                 node.cargo = NestedPageContent::Resolved(name.clone());
                                 node.children.clear();
@@ -985,55 +959,51 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                         // in which case a NestedPageContent::Other cargo is produced.
 
                         for operand in &mut calculation.operands {
-                            match operand {
-                                Operand::PlaceHolder(ref name) => {
+                            if let Operand::PlaceHolder(ref name) = operand {
 
-                                    #[cfg(test)]
-                                    {
-                                        println!("Looking for an actual for {}", name);
-                                    }
+                                #[cfg(test)]
+                                {
+                                    println!("Looking for an actual for {}", name);
+                                }
 
-                                    match actuals.get_mut(name) {
-                                        None => counts.0 += 1,
-                                        Some(ref mut actual_node) => {
-                                            // Read the content of the first Other child.
-                                            let num_text = actual_node.traverse(
-                                                String::new(),
-                                                |accum, nd, _path| {
-                                                    match nd.cargo {
-                                                        NestedPageContent::Other(ref txt) => *accum = txt.clone(),
-                                                        _ => (),
-                                                    }
-
-                                                    if accum.len() == 0 {TraverseAction::Continue} else {TraverseAction::Stop}
+                                match actuals.get_mut(name) {
+                                    None => counts.0 += 1,
+                                    Some(ref mut actual_node) => {
+                                        // Read the content of the first Other child.
+                                        let num_text = actual_node.traverse(
+                                            String::new(),
+                                            |accum, nd, _path| {
+                                                if let NestedPageContent::Other(ref txt) = nd.cargo {
+                                                    *accum = txt.clone();
                                                 }
-                                            );
 
-                                            #[cfg(test)]
-                                            {
-                                                println!("num_text = {}", &num_text);
+                                                if accum.is_empty() {TraverseAction::Continue} else {TraverseAction::Stop}
                                             }
+                                        );
 
-                                            if num_text.len() > 0 {
-                                                let opd = Operand::new(num_text);
+                                        #[cfg(test)]
+                                        {
+                                            println!("num_text = {}", &num_text);
+                                        }
 
-                                                match opd {
-                                                    Operand::Value(_) => {
-                                                        *operand = opd;
-                                                        counts.1 += 1;
-                                                    },
-                                                    _ => counts.0 += 1,
+                                        if !num_text.is_empty() {
+                                            let opd = Operand::new(num_text);
 
-                                                }
-                                            } else {
-                                                counts.0 += 1;
+                                            match opd {
+                                                Operand::Value(_) => {
+                                                    *operand = opd;
+                                                    counts.1 += 1;
+                                                },
+                                                _ => counts.0 += 1,
+
                                             }
-                                        },
-                                    }
-                                },
-                                _ => (),
+                                        } else {
+                                            counts.0 += 1;
+                                        }
+                                    },
+                                }
                             }
-                        } // end for
+                        }
 
                         // Try and resolve the calculation.
                         match calculation.get_value() {
@@ -1102,9 +1072,8 @@ fn content_tree_to_output_string(content_tree: &mut Node<NestedPageContent>) -> 
                 },
                 NestedPageContent::Timestamp => {
                     let duration = loop {
-                        match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-                            Ok(dur) => break dur,
-                            Err(_) => (),
+                        if let Ok(dur) = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                            break dur;
                         }
                     };
 
