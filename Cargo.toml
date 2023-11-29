@@ -2,6 +2,12 @@
 name = "masterpg"
 version = "1.0.0"
 edition = "2021"
+description = "Command-line utility and library function that compose web pages, or any texts, by resolving placeholders with actual content from referred or same files."
+license = "MIT OR Apache-2.0"
+authors = ["Koen Bekx <klbekx@gmail.com>"]
+repository = "https://github.com/KoenLBekx/masterpg"
+homepage = "https://github.com/KoenLBekx/masterpg"
+documentation = "https://docs.rs/masterpg"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

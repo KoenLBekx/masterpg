@@ -1,19 +1,55 @@
 // TODO: Change version to 1.0.0 after doing the same for tree_by_path and string_io_and_mock.
 
 //{ Documentation
-//! # `masterpg` utility
-//!
-//! `fn main` in src/main.rs (the command-line utility)<br >
-//! calls<br />
-//! `pub fn compose` in src/lib.rs (the library function).
-//!
-//! `pub fn compose` composes files - usually static HTML files - as an alternative to a missing
-//! `<include />` tag in HTML.
-//!
-//! Both the command-line utility and the library function are meant to be used web-server-side or during the publishing phase of web pages, albeit they
-//! can compose any kind of files.
+//! ## Overview
 //! 
-//! They process seven kinds of tags in input files :
+//! The `masterpg` utility composes files - usually static HTML files - as an alternative to a missing
+//! `<include />` tag in HTML.
+//! 
+//! This crate provides both
+//! - a library function,
+//! - and a command-line utility.
+//! 
+//! Both the library function and the command-line utility were designed to be used web-server-side or during the publishing phase of web pages, albeit they
+//! can compose any kind of text files.
+//! 
+//! 
+//! ## Library function
+//! 
+//! `pub fn compose` in `src/lib.rs` provides this utility's composition functionality as a public function you can call from within your own Rust applications.
+//! 
+//! It has at least two modes of input and output, as it takes an instance of an implementation of the [`string_io_and_mock::TextIOHandler`](https://crates.io/crates/string_io_and_mock) trait for its `io_handler` parameter  :
+//! - files
+//! - strings stored in memory.
+//! 
+//! In order to have `masterpg` work with files, you can pass an instance of `string_io_and_mock::FileTextHandler`.
+//! 
+//! In order to have it work with strings, you can pass an instance of `string_io_and_mock::MockTextHandler`.
+//! 
+//! *(`MockTextHandler` is called that way because it can be used to mock the behaviour of `FileTextHandler` in unit tests, even if it is usable and tested as a component in its own right for storage and retrieval of strings in memory.)*
+//! 
+//! For other needs, you can always develop your own implementation of `string_io_and_mock::TextIOHandler`.
+//! 
+//! In order to use the library function, execute the below command in your project's main directory:
+//! 
+//! > `cargo add masterpg`
+//! 
+//! 
+//! ## Command-line utility
+//! 
+//! The command-line utility is defined by `fn main` in src/main.rs and calls the library function.
+//! 
+//! In order to use it, you'll have to [install Rust](https://www.rust-lang.org/tools/install), open a terminal window, and execute
+//! 
+//! > `cargo install masterpg`
+//! 
+//! which will both download and compile `masterpg` for your architecture.
+//! 
+//! For more details about the file system path where the resulting executable can be found, see [Cargo's reference](https://doc.rust-lang.org/cargo/commands/cargo-install.html#description).
+//!
+//! 
+//! ## Input file tags
+//!  `masterpg` functions by processing seven kinds of tags in input files :
 //! 
 //! > `<+output file_path/>` :
 //! >> indicates to which file the result of the composition operation has to be written.
