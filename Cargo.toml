@@ -1,6 +1,6 @@
 [package]
 name = "masterpg"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 description = "Command-line utility and library function that compose web pages, or any texts, by resolving placeholders with actual content from referred or same files."
 license = "MIT OR Apache-2.0"
@@ -12,6 +12,7 @@ documentation = "https://docs.rs/masterpg"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+laconic = { version = "1.0.0", path = "../laconic" }
 nom = { version = "7.1.3", features = ["alloc"] }
 serial_test = { version = "2.0.0", features = ["file_locks"] }
 string_io_and_mock = "1.0.1"

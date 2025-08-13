@@ -1,5 +1,3 @@
-// TODO: Change version to 1.0.0 after doing the same for tree_by_path and string_io_and_mock.
-
 //{ Documentation
 //! ## Overview
 //! 
@@ -56,7 +54,7 @@
 //! 
 //! > `<+master file_path/>` :
 //! >> indicates that a file having the given path is to be used as master page. If the file path doesn't contain a full path, it is considered to be relative to  the current active directory.<br />
-//! An input file can contain more than one `<+master ...>` tags.
+//! >> An input file can contain more than one `<+master ...>` tags.
 //!
 //! > `<+placeholder tag_name/>` :
 //! >> indicates that this placeholder has to be replaced by the content of an `<+actual>` tag having the same tag name.
@@ -69,7 +67,7 @@
 //!
 //! > `<+timestamp/>` :
 //! >> produces a timestamp in the form of `ts=16548548678647` in the output text. The digits are
-//! the number of milliseconds elapsed since the start of the Unix epoch.
+//! >> the number of milliseconds elapsed since the start of the Unix epoch.
 //! 
 //! > `<+calc tag_name [operator] [operand1] [operand2] [operand3] ... />` :
 //! >> performs a calculation : it applies the operator +, -, *, / or others on one or more operands.
@@ -80,8 +78,7 @@
 //!
 //! The operands of a `<+calc  ... />` tag can be either
 //! - literal numerical values, or else
-//! - tag names that refer to other `<+calc tag_name .../>` tags or `<+actual tag_name>` tags
-//! having that tag name.
+//! - tag names that refer to other `<+calc tag_name .../>` tags or `<+actual tag_name>` tags having that tag name.
 //!
 //! This means that `<+actual>` tags and `<+calc>` tags can't have the same tag name.
 //!
@@ -89,23 +86,23 @@
 //!
 //! Units, however, may follow immediately after `<+calc - .../>` or `<+placeholder .../>` tags. E.g.:
 //!
-//! >`<+actual divHeight>30</+actual>`<br/>
-//! `<+actual goldenCut>1.618034</+actual>`<br/>
-//! `<+calc largeDivHeight * divHeight 2/>`<br/>
-//! `<+calc largeDivWidth / largeDivHeight goldenCut />`<br/>
-//! `...`<br/>
-//! `<+placeholder largeDivWidth/>px`<br/>
-//! `...`<br/>
-//! `<+placeholder largeDivWidth/>px`<br/>
+//! > `<+actual divHeight>30</+actual>`<br/>
+//! > `<+actual goldenCut>1.618034</+actual>`<br/>
+//! > `<+calc largeDivHeight * divHeight 2/>`<br/>
+//! > `<+calc largeDivWidth / largeDivHeight goldenCut />`<br/>
+//! > `...`<br/>
+//! > `<+placeholder largeDivWidth/>px`<br/>
+//! > `...`<br/>
+//! > `<+placeholder largeDivWidth/>px`<br/>
 //! 
 //! A `<+calc tag_name .../>` tag, when evaluated, will be replaced by an `<+/actual tag_name>result</+actual>` tag, except when the tag name (the first word after `<+calc`) is `-`, in which case the result will be directly included in the output file :
 //! 
-//! >`<+actual price>200</+actual>`<br />
-//! `<+actual commission>20</+actual>`<br />
-//! `<+actual taxRate>0.20</+actual>`<br />
-//! `<+calc amount + price commission/> ---> <+actual amount>220</+actual>`<br />
-//! `<+calc tax * amount taxRate/> ---> <+actual>44</+actual>`<br />
-//! `<+calc - + amount tax/> $ ---> 264 $`
+//! > `<+actual price>200</+actual>`<br />
+//! > `<+actual commission>20</+actual>`<br />
+//! > `<+actual taxRate>0.20</+actual>`<br />
+//! > `<+calc amount + price commission/> ---> <+actual amount>220</+actual>`<br />
+//! > `<+calc tax * amount taxRate/> ---> <+actual>44</+actual>`<br />
+//! > `<+calc - + amount tax/> $ ---> 264 $`
 //!
 //! `<+calc>` tags handle the below operators :
 //!
@@ -133,9 +130,9 @@
 //! > These operators are case-insensitive.
 //!
 //! > `<+calc>`, `<+actual>` and `<+placeholder>` tags may reside in the same file, in a master
-//! file or in a client file referring to a master file. As `masterpg` operates by joining all
-//! these files' contents to one text before resolving the said tags, you are free to put these
-//! tags wherever they serve your purpose.
+//! > file or in a client file referring to a master file. As `masterpg` operates by joining all
+//! > these files' contents to one text before resolving the said tags, you are free to put these
+//! > tags wherever they serve your purpose.
 //! 
 //! ## How input files are processed
 //! 
@@ -231,9 +228,11 @@
 //! `</html>`
 //}
 
-use std::cmp::min; //{
+//{ use ...
+use std::cmp::min;
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use laconic::{ExecutionOutcome, Interpreter};
 use std::mem::discriminant;
 use std::str::FromStr;
 use std::time::SystemTime;
@@ -503,12 +502,61 @@ impl std::fmt::Display for Calculation {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+enum LaconicValue {
+    Unresolved,
+    Resolved(String),
+    Invalid(String),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+struct LaconicScript {
+    name: String,
+    script: String,
+    outcome: LaconicValue,
+}
+impl LaconicScript {
+    fn new(words: Vec<String>) -> Result<Self, String> {
+        if words.len() != 2 {
+            return Err("Not exactly 2 attributes found after tag name in <+laconic .../> tag".to_string());
+        }
+
+        Ok(LaconicScript {
+            name: words[0].clone(),
+            script: words[1].clone(),
+            outcome: LaconicValue::Unresolved,
+        })
+    }
+
+    fn get_value(&mut self, interpreter: &mut Interpreter) -> LaconicValue {
+        match interpreter.execute(self.script.clone()) {
+            Ok(execution_outcome) => match execution_outcome {
+                ExecutionOutcome::Empty => LaconicValue::Resolved(String::new()),
+                ExecutionOutcome::Number{value: num, format_info: formatter} if !interpreter.is_quiet() => LaconicValue::Resolved(formatter.format(num)),
+                ExecutionOutcome::Number{value: num, format_info: formatter} => LaconicValue::Resolved(String::new()),
+                ExecutionOutcome::Text(txt) if !interpreter.is_quiet() => LaconicValue::Resolved(txt),
+                ExecutionOutcome::Text(txt) => LaconicValue::Resolved(String::new()),
+                ExecutionOutcome::Error(script_err) => LaconicValue::Invalid(script_err.to_string()),
+            },
+            Err(script_err) => LaconicValue::Invalid(script_err.to_string()),
+        }
+    }
+}
+impl std::fmt::Display for LaconicScript {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let output = format!("Laconic({} {})", &self.name, &self.script);
+
+        write!(f, "{}", output)
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
 enum NestedPageContent {
     Main,
     Output(String),
     Master(String),
     Actual(String),
     Calc(Calculation),
+    Laconic(LaconicScript),
     PlaceHolder(String),
     Other(String),
     Resolved(String),
@@ -516,7 +564,7 @@ enum NestedPageContent {
     Comment,
 }
 impl NestedPageContent {
-    fn new(words: &Vec<String>) -> Result<NestedPageContent, String> {
+    fn new(words: &[String]) -> Result<NestedPageContent, String> {
         if words.is_empty() {
             Err("fn NestedPageContent::new expects at least one element in its words parameter.".to_string())
         } else {
@@ -525,7 +573,7 @@ impl NestedPageContent {
 
             let required_words: usize = match tag_type {
                 "main" | "comment" | "timestamp" => 1,
-                "output" | "master" | "actual" | "placeholder" | "calc" | "other" | "resolved" => 2,
+                "output" | "master" | "actual" | "placeholder" | "calc" | "other" | "resolved" | "laconic" => 2,
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
             };
 
@@ -545,6 +593,7 @@ impl NestedPageContent {
                 "other" => NestedPageContent::Other(attributes[0].clone()),
                 "resolved" => NestedPageContent::Resolved(attributes[0].clone()),
                 "calc" => NestedPageContent::Calc(Calculation::new(attributes)?),
+                "laconic" => NestedPageContent::Laconic(LaconicScript::new(attributes)?),
                 "timestamp" => NestedPageContent::Timestamp,
                 "comment" => NestedPageContent::Comment,
                 _ => return Err(format!("Invalid masterpage tag found : {}.", tag_type).to_string()),
@@ -565,6 +614,7 @@ impl std::fmt::Display for NestedPageContent {
             NestedPageContent::PlaceHolder(ref word) => format!("PlaceHolder({word})"),
             NestedPageContent::Other(ref text) => format!("Other({})", &text[0..min(10, text.len())]),
             NestedPageContent::Calc(calculation) => calculation.to_string(),
+            NestedPageContent::Laconic(laconic_script) => laconic_script.to_string(),
             NestedPageContent::Resolved(ref word) => format!("Resolved({word})"),
             NestedPageContent::Timestamp => "Timestamp".to_string(),
             NestedPageContent::Comment => "Comment".to_string(),
@@ -603,8 +653,13 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
                         map(
                             many0(
                                 alt((
-                                    is_not(" \t\n\r/><"),
-                                    terminated(tag("/"), peek(is_not(">")))
+                                    is_not(" \t\n\r/><\""),
+                                    terminated(tag("/"), peek(is_not(">"))),
+                                    delimited(
+                                        tag("\""),
+                                        is_not("\""),
+                                        tag("\""),
+                                    )
                                 ))
                             ),
                             |list: Vec<&str>|
@@ -737,14 +792,14 @@ fn read_nested_content(input: &str) -> Result<Node<NestedPageContent>, String> {
         Err(err) => Err(err),
         Ok(flat_contents) => {
 
-            let mut root = Node::new(NestedPageContent::new(&vec!["main".to_string()])?);
+            let mut root = Node::new(NestedPageContent::new(&["main".to_string()])?);
             let mut path = root.get_first_path();
 
             for flat_content in flat_contents {
 
                 match flat_content {
                     FlatPageContent::Other(text) => {
-                        add_content_to_root(&mut root, &path, NestedPageContent::new(&vec!["other".to_string(), text])?)?;
+                        add_content_to_root(&mut root, &path, NestedPageContent::new(&["other".to_string(), text])?)?;
                     },
                     FlatPageContent::SelfContainedMPTag(words) => {
                         if words[0].to_lowercase().as_str() == "actual" {
@@ -818,7 +873,7 @@ where Tioh: TextIOHandler {
                                         Ok(ref mut trees) => {
                                             trees.push(master_tree);
 
-                                            let resolved = NestedPageContent::new(&vec!["resolved".to_string(), name.clone()]);
+                                            let resolved = NestedPageContent::new(&["resolved".to_string(), name.clone()]);
                                             match resolved {
                                                 Ok(rslv) => node.cargo = rslv,
                                                 Err(err) => {
@@ -944,6 +999,7 @@ fn find_output_name_in_content_tree(content_tree: &mut Node<NestedPageContent>) 
 fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<usize, String> {
     let mut actuals = HashMap::<String, Node<NestedPageContent>>::new();
     let mut passes = 0usize;
+    let mut laconic_interpreter = Interpreter::new_stdio_filesys();
 
     #[cfg(test)]
     {
@@ -984,6 +1040,27 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                                 for child in &actual_node.children {
                                     node.children.push(child.clone());
                                 }
+                            },
+                        }
+                    },
+                    NestedPageContent::Laconic(ref mut laconic_script) => {
+                        // Try and execute the Laconic script.
+                        match laconic_script.get_value(&mut laconic_interpreter) {
+                            LaconicValue::Unresolved => (),
+                            LaconicValue::Resolved(ref val) => {
+                                node.cargo = match laconic_script.name.as_str() {
+                                    "-" => NestedPageContent::Resolved(laconic_script.name.clone()),
+                                    nm => NestedPageContent::Actual(nm.to_string()),
+                                };
+
+                                node.children.clear();
+                                node.children.push(Node::new(NestedPageContent::Other(val.to_string())));
+                            },
+                            LaconicValue::Invalid(script_err) => {
+                                node.cargo = NestedPageContent::Resolved(laconic_script.name.clone());
+
+                                node.children.clear();
+                                node.children.push(Node::new(NestedPageContent::Other(script_err.to_string())));
                             },
                         }
                     },
@@ -1384,6 +1461,13 @@ mod tests {
     }
 
     #[test]
+    fn mpt_self_contained_dbquotes() {
+        let result = master_page_tag_self_contained(r#"<+abc / "/>4 3 1 <+" def ghi/>blabla"#);
+        assert!(result.is_ok());
+        assert_eq!(Ok(("blabla", FlatPageContent::SelfContainedMPTag(vec!["abc".to_string(), "/".to_string(), "/>4 3 1 <+".to_string(), "def".to_string(), "ghi".to_string()]))), result);
+    }
+
+    #[test]
     fn mpt_other_empty() {
         let result = other_flat_content("");
         assert!(result.is_err());
@@ -1546,6 +1630,30 @@ Welcome to my site about <+placeholder title/>!
 
         assert_eq!(
             "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other(Introducti)] Actual(body)[Other(Welcome to) PlaceHolder(title) Other(!)]]".to_string(),
+            repr
+        );
+    }
+
+    #[test]
+    fn read_nested_content_mixed_with_laconic() {
+        let test_content = r#"
+<+output out.htm/>
+<+master boilerplate.mpm/>
+<+actual title>Introduction</+actual>
+<+laconic test "$§width 12.4"/>
+<+actual body>
+Welcome to my site about <+placeholder title/>!
+</+actual>
+"#.replace("\n", "");
+
+        let result = read_nested_content(test_content.as_str());
+        assert!(result.is_ok());
+
+        let mut root = result.unwrap();
+        let repr = utils::content_tree_to_string(&mut root);
+
+        assert_eq!(
+            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other(Introducti)] Laconic(test $§width 12.4) Actual(body)[Other(Welcome to) PlaceHolder(title) Other(!)]]".to_string(),
             repr
         );
     }
@@ -2555,6 +2663,70 @@ Calculation outcome is: <+calc - / AAA BBB/>
 <body>Test page<br />
 This is a test page.<br />
 Calculation outcome is: 2.4</body>
+</html>
+".replace("\n", "").to_string();
+
+        assert_eq!(expected, output);
+    }
+
+    #[test]
+    fn compose_with_laconic() {
+        let master_source = r#"
+<!doctype html>
+<html>
+<head>
+<+comment>Keep it simple for now.</+comment>
+<title><+placeholder title/></title>
+</head>
+<body>
+<+laconic FIB4 "$§fib4 o§fib 4"/>
+<+PLACEHOLDER page_content/>
+</body>
+</html>
+"#.replace("\n", "");
+
+        let page_content_source = r#"
+<+master general.mpm/>
+<+OUTPUT testPage.htm/>
+
+<+actual title>Test page</+actual>
+
+<+actual page_content>
+<+placeholder title/><br />
+This is a test page.<br />
+Fibonacci(4) is: <+laconic - "q,v§fib4"/>
+</+actual>
+"#.replace("\n", "");
+
+        let master_name = OsStr::new("general.mpm");
+        let client_name = OsStr::new("testPage.mpc");
+
+        let mut text_handler = MockTextHandler::new();
+        text_handler.write_text(&master_name, master_source).unwrap();
+        text_handler.write_text(&client_name, page_content_source).unwrap();
+
+        let result = compose(&client_name, &mut text_handler);
+
+        // Debug
+        // println!("Error = {}", result.unwrap_err());
+
+        assert!(result.is_ok());
+
+        let output = text_handler.read_text(&OsStr::new("testPage.htm")).unwrap();
+
+        // Debug
+        println!("Composed file:\n{}", &output);
+
+        let expected = "
+<!doctype html>
+<html>
+<head>
+<title>Test page</title>
+</head>
+<body>Test page<br />
+This is a test page.<br />
+Fibonacci(4) is: 3
+</body>
 </html>
 ".replace("\n", "").to_string();
 
