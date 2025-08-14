@@ -537,9 +537,9 @@ impl LaconicScript {
             Ok(execution_outcome) => match execution_outcome {
                 ExecutionOutcome::Empty => LaconicValue::Resolved(String::new()),
                 ExecutionOutcome::Number{value: num, format_info: formatter} if !interpreter.is_quiet() => LaconicValue::Resolved(formatter.format(num)),
-                ExecutionOutcome::Number{value: num, format_info: formatter} => LaconicValue::Resolved(String::new()),
+                ExecutionOutcome::Number{value: _num, format_info: _formatter} => LaconicValue::Resolved(String::new()),
                 ExecutionOutcome::Text(txt) if !interpreter.is_quiet() => LaconicValue::Resolved(txt),
-                ExecutionOutcome::Text(txt) => LaconicValue::Resolved(String::new()),
+                ExecutionOutcome::Text(_txt) => LaconicValue::Resolved(String::new()),
                 ExecutionOutcome::Error(script_err) => LaconicValue::Invalid(script_err.to_string()),
             },
             Err(script_err) => LaconicValue::Invalid(script_err.to_string()),
