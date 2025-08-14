@@ -247,6 +247,11 @@ use nom::{
 use string_io_and_mock::TextIOHandler;
 use tree_by_path::{Node, TraverseAction}; //}
 
+//{ Constants
+const LACONIC_SCRIPT_OPEN: &str = "{";
+const LACONIC_SCRIPT_CLOSE: &str = "}";
+//}
+
 /// See the crate's documentation about functionality.
 pub fn compose<Tioh>(file_path:&OsStr, io_handler: &mut Tioh) -> Result<(), String>
 where Tioh: TextIOHandler {
@@ -653,12 +658,12 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
                         map(
                             many0(
                                 alt((
-                                    is_not(" \t\n\r/><\""),
+                                    is_not(format!(" \t\n\r/><{}", LACONIC_SCRIPT_OPEN).as_str()),
                                     terminated(tag("/"), peek(is_not(">"))),
                                     delimited(
-                                        tag("\""),
-                                        is_not("\""),
-                                        tag("\""),
+                                        tag(LACONIC_SCRIPT_OPEN),
+                                        is_not(LACONIC_SCRIPT_CLOSE),
+                                        tag(LACONIC_SCRIPT_CLOSE),
                                     )
                                 ))
                             ),
@@ -1461,10 +1466,22 @@ mod tests {
     }
 
     #[test]
-    fn mpt_self_contained_dbquotes() {
-        let result = master_page_tag_self_contained(r#"<+abc / "/>4 3 1 <+" def ghi/>blabla"#);
+    fn mpt_self_contained_braces() {
+        let result = master_page_tag_self_contained(r#"<+abc / {/>4 3 1 <+} def ghi/>blabla"#);
         assert!(result.is_ok());
         assert_eq!(Ok(("blabla", FlatPageContent::SelfContainedMPTag(vec!["abc".to_string(), "/".to_string(), "/>4 3 1 <+".to_string(), "def".to_string(), "ghi".to_string()]))), result);
+    }
+
+    #[test]
+    fn mpt_self_contained_braces_with_newline() {
+        let result = master_page_tag_self_contained("<+abc / {/>4 3
+1 <+} def ghi/>blabla");
+
+        // Debug
+        // println!("master_page_tag_self_contained result: {}", result.unwrap_err());
+
+        assert!(result.is_ok());
+        assert_eq!(Ok(("blabla", FlatPageContent::SelfContainedMPTag(vec!["abc".to_string(), "/".to_string(), "/>4 3\n1 <+".to_string(), "def".to_string(), "ghi".to_string()]))), result);
     }
 
     #[test]
@@ -1640,7 +1657,7 @@ Welcome to my site about <+placeholder title/>!
 <+output out.htm/>
 <+master boilerplate.mpm/>
 <+actual title>Introduction</+actual>
-<+laconic test "$§width 12.4"/>
+<+laconic test {$§width 12.4}/>
 <+actual body>
 Welcome to my site about <+placeholder title/>!
 </+actual>
@@ -2679,7 +2696,7 @@ Calculation outcome is: 2.4</body>
 <title><+placeholder title/></title>
 </head>
 <body>
-<+laconic FIB4 "$§fib4 o§fib 4"/>
+<+laconic FIB4 {$§fib4 o§fib 4}/>
 <+PLACEHOLDER page_content/>
 </body>
 </html>
@@ -2694,7 +2711,7 @@ Calculation outcome is: 2.4</body>
 <+actual page_content>
 <+placeholder title/><br />
 This is a test page.<br />
-Fibonacci(4) is: <+laconic - "q,v§fib4"/>
+Fibonacci(4) is: <+laconic - {q,v§fib4}/>
 </+actual>
 "#.replace("\n", "");
 
