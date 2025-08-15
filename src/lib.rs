@@ -1,3 +1,5 @@
+// TODO: document the <+laconic ...> tag.
+
 //{ Documentation
 //! ## Overview
 //! 
