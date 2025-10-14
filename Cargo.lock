@@ -128,9 +128,9 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "laconic"
-version = "1.0.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fdf4cb0ec3dfbe80550407b2dfca83593bfa53f54ecd72c062407b9b7b2ea97"
+checksum = "f1cb40dc958e2b90aed4336f8d087451b593ba4623a40452cf11bd6541a92be6"
 dependencies = [
  "string_io_and_mock",
 ]
