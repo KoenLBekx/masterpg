@@ -108,75 +108,75 @@ fn compose_svg_in_html() {
     let routines_source = "
         <+laconic routineDeclarations {
             R(
-                §toSvgDattribute
+                #toSvgDattribute
 
                 [c Read coordinates from stack]
-                $§nrItems k,
-                $§baseName §item
+                $#nrItems k,
+                $#baseName #item
 
                 F
                     1
-                    v§nrItems
+                    v#nrItems
                     1
-                    §ix
-                    $+,v§baseName v§ix k
+                    #ix
+                    $+,v#baseName v#ix k
 
-                $§minx 10_000_000
-                $§maxx ~v§minx
-                $§miny v§minx
-                $§maxy v§maxx
+                $#minx 10_000_000
+                $#maxx ~v#minx
+                $#miny v#minx
+                $#maxy v#maxx
 
                 [c Get min and max value of odd (x) coordinates]
                 F(
                     1
-                    v§nrItems
+                    v#nrItems
                     2
-                    §ix
-                    $§coord v+,v§baseName v§ix
-                    m :§minx v§coord
-                    M :§maxx v§coord
+                    #ix
+                    $#coord v+,v#baseName v#ix
+                    m :#minx v#coord
+                    M :#maxx v#coord
                 )
 
                 [c Get min and max value of even (y) coordinates]
                 F(
                     0
-                    v§nrItems
+                    v#nrItems
                     2
-                    §ix
-                    $§coord v+,v§baseName v§ix
-                    m :§miny v§coord
-                    M :§maxy v§coord
+                    #ix
+                    $#coord v+,v#baseName v#ix
+                    m :#miny v#coord
+                    M :#maxy v#coord
                 )
 
                 [c Compose d attribute value]
-                $§d §
+                $#d #
 
                 F
                     1
-                    v§nrItems
+                    v#nrItems
                     1
-                    §ix
+                    #ix
                     ;(
                         +
-                            :§d
+                            :#d
                             ?
-                                =v§ix 1
+                                =v#ix 1
                                 [sM ]
                                 ?
-                                    =1 %v§ix 2
+                                    =1 %v#ix 2
                                     [sL ]
-                                    §
+                                    #
                             
                         +(
-                            :§d
+                            :#d
                             v+,
-                                v§baseName
-                                v§ix
+                                v#baseName
+                                v#ix
                             [s ]
                         )
                     )
 
-                v§d
+                v#d
             )
         }/>
     ".to_string();
@@ -214,12 +214,12 @@ fn compose_svg_in_html() {
                                 10
                                 0
                                 1
-                                §ix
+                                #ix
                                 ;
-                                    K ^ v§ix 1.5
-                                    K v§ix
+                                    K ^ v#ix 1.5
+                                    K v#ix
 
-                            X§toSvgDattribute
+                            X#toSvgDattribute
                         }/>
                     "
                     fill="red" stroke="blue" stroke-width="3"

@@ -776,6 +776,13 @@ fn find_output_name_in_content_tree(content_tree: &mut Node<NestedPageContent>) 
 }
 
 fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<usize, String> {
+    struct TraverseResult {
+        unresolved_count: u32,
+        resolved_count: u32,
+        has_laconic_error: bool,
+        laconic_error: String,
+    }
+
     let mut actuals = HashMap::<String, Node<NestedPageContent>>::new();
     let mut passes = 0usize;
     let mut laconic_interpreter = Interpreter::new_stdio_filesys();
@@ -803,15 +810,15 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
         );
 
         // Resolve placeholders and calc operands that can already be resolved.
-        let (unresolved_count, resolved_count) = content_tree.traverse_mut(
-            (0, 0),
-            |counts, node, _path| {
+        let traverse_results = content_tree.traverse_mut(
+            TraverseResult{unresolved_count: 0, resolved_count:0, has_laconic_error: false, laconic_error: String::new()},
+            |trav_results, node, _path| {
                 match node.cargo {
                     NestedPageContent::PlaceHolder(ref name) => {
                         match actuals.get(name) {
-                            None => counts.0 += 1,
+                            None => trav_results.unresolved_count += 1,
                             Some(actual_node) => {
-                                counts.1 += 1;
+                                trav_results.resolved_count += 1;
                                 node.cargo = NestedPageContent::Resolved(name.clone());
                                 node.children.clear();
 
@@ -840,6 +847,8 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
 
                                 node.children.clear();
                                 node.children.push(Node::new(NestedPageContent::Other(script_err.to_string())));
+                                trav_results.has_laconic_error = true;
+                                trav_results.laconic_error = script_err.to_string();
                             },
                         }
                     },
@@ -859,7 +868,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                                 }
 
                                 match actuals.get_mut(name) {
-                                    None => counts.0 += 1,
+                                    None => trav_results.unresolved_count += 1,
                                     Some(ref mut actual_node) => {
                                         // Read the content of the first Other child.
                                         let num_text = actual_node.traverse(
@@ -884,13 +893,13 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                                             match opd {
                                                 Operand::Value(_) => {
                                                     *operand = opd;
-                                                    counts.1 += 1;
+                                                    trav_results.resolved_count += 1;
                                                 },
-                                                _ => counts.0 += 1,
+                                                _ => trav_results.unresolved_count += 1,
 
                                             }
                                         } else {
-                                            counts.0 += 1;
+                                            trav_results.unresolved_count += 1;
                                         }
                                     },
                                 }
@@ -927,16 +936,19 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
         #[cfg(test)]
         {
             println!("~~~~~~~~~~~~~~~~~~~~ Unresoldved: {} ~~~~ Resolved: {}",
-                unresolved_count,
-                resolved_count
+                traverse_results.unresolved_count,
+                traverse_results.resolved_count
             );
 
             println!("~~~~~~~~~~~~~~~~~~~~ Ref. resolution loop  : content_tree :\n{}",
                 tests::utils::content_tree_to_string(content_tree));
         }
 
-        if (unresolved_count == 0) || (resolved_count == 0) {
-            break unresolved_count;
+        if traverse_results.has_laconic_error {
+            return Err(format!("Laconic error: {}", traverse_results.laconic_error));
+        }
+        if (traverse_results.unresolved_count == 0) || (traverse_results.resolved_count == 0) {
+            break traverse_results.unresolved_count;
         }
     };
 
