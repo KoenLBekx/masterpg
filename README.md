@@ -186,7 +186,8 @@ masterpg works by :
     - then reading an input file in a string and replacing all `<+master />`-tags in this string with the content of the entire file indicated, and even doing this recursively, so even master page files can contain their own `<+master />`-tags;
 
     - then, in the resulting string, replacing
-        - all `<+calc>` tags with `<+actual>` tags holding the calculated value;
+        - all `<+calc>` tags with `<+actual>` tags holding the calculated value, or with the literal value;
+        - all `<+laconic>` tags with `<+actual>` tags holding the calculated value, or with the literal value;
         - all `<+placeholder>` tags with the content of the corresponding `<+actual>` tags;
         - all `<timestamp/>` tags with a timestamp;
 
