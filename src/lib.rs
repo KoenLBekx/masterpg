@@ -27,7 +27,7 @@ const LACONIC_SCRIPT_CLOSE: &str = "}";
 //}
 
 /// See the crate's documentation about functionality.
-pub fn compose<Tioh>(file_path:&OsStr, io_handler: &mut Tioh) -> Result<(), String>
+pub fn compose<Tioh>(file_path:&OsStr, io_handler: &mut Tioh) -> Result<Vec<String>, String>
 where Tioh: TextIOHandler {
     let all_texts:String = read_text_from_handler(io_handler, file_path)?;
     let mut content_tree = read_nested_content(all_texts.as_str())?;
@@ -50,12 +50,12 @@ where Tioh: TextIOHandler {
     let output_name = OsStr::new(&output_name_string);
 
     // Resolve all calculations and placeholders.
-    resolve_references_in_content_tree(&mut content_tree)?;
+    let laconic_errors_found = resolve_references_in_content_tree(&mut content_tree)?;
 
     let output = content_tree_to_output_string(&mut content_tree);
 
     match io_handler.write_text(output_name, output) {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(laconic_errors_found),
         Err(err) => Err(err.to_string())
     }
 }
@@ -775,17 +775,15 @@ fn find_output_name_in_content_tree(content_tree: &mut Node<NestedPageContent>) 
     )
 }
 
-fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<usize, String> {
+fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>) -> Result<Vec<String>, String> {
     struct TraverseResult {
         unresolved_count: u32,
         resolved_count: u32,
-        has_laconic_error: bool,
-        laconic_error: String,
     }
 
     let mut actuals = HashMap::<String, Node<NestedPageContent>>::new();
-    let mut passes = 0usize;
     let mut laconic_interpreter = Interpreter::new_stdio_filesys();
+    let mut laconic_errors = Vec::<String>::new();
 
     #[cfg(test)]
     {
@@ -794,8 +792,6 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
     }
 
     let unresolved_tally = loop {
-
-        passes += 1;
 
         // Add clones of already found actuals to hashmap.
         actuals = content_tree.traverse(
@@ -811,7 +807,7 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
 
         // Resolve placeholders and calc operands that can already be resolved.
         let traverse_results = content_tree.traverse_mut(
-            TraverseResult{unresolved_count: 0, resolved_count:0, has_laconic_error: false, laconic_error: String::new()},
+            TraverseResult{unresolved_count: 0, resolved_count:0},
             |trav_results, node, _path| {
                 match node.cargo {
                     NestedPageContent::PlaceHolder(ref name) => {
@@ -843,12 +839,12 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                                 node.children.push(Node::new(NestedPageContent::Other(val.to_string())));
                             },
                             LaconicValue::Invalid(script_err) => {
+                                let script_text = laconic_script.script.clone();
                                 node.cargo = NestedPageContent::Resolved(laconic_script.name.clone());
 
                                 node.children.clear();
                                 node.children.push(Node::new(NestedPageContent::Other(script_err.to_string())));
-                                trav_results.has_laconic_error = true;
-                                trav_results.laconic_error = script_err.to_string();
+                                laconic_errors.push(format!("{} in script\n'{{{}}}'", script_err, script_text));
                             },
                         }
                     },
@@ -944,16 +940,13 @@ fn resolve_references_in_content_tree(content_tree: &mut Node<NestedPageContent>
                 tests::utils::content_tree_to_string(content_tree));
         }
 
-        if traverse_results.has_laconic_error {
-            return Err(format!("Laconic error: {}", traverse_results.laconic_error));
-        }
         if (traverse_results.unresolved_count == 0) || (traverse_results.resolved_count == 0) {
             break traverse_results.unresolved_count;
         }
     };
 
     if unresolved_tally == 0 {
-        Ok(passes)
+        Ok(laconic_errors)
     } else {
         Err("Unresolvable placeholder tags or calculation operands found.".to_string())
     }

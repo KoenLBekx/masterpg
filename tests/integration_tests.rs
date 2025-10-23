@@ -256,4 +256,44 @@ Composition result :
         result_text);
 }
 
+#[test]
+#[file_serial]
+fn laconic_errors() {
+    let playground_name = utils::ensure_playground(true);
+    let mut input_file_handler = FileTextHandler::new();
+
+    let page_source = r#"
+        <+output tests/playground/composed.txt/>
+        <+laconic - {/ 588 0}/>
+    "#.to_string();
+
+    let mut page_src_name = playground_name.clone();
+    page_src_name.push(&OsString::from("/page_src.mpc"));
+    input_file_handler.write_text(&page_src_name, page_source).unwrap();
+
+    let mut process_file_handler = FileTextHandler::new();
+    let result = compose(&page_src_name, &mut process_file_handler);
+
+    // Debug
+    // println!("{}", result.clone().unwrap_err());
+
+    assert!(result.is_ok());
+    let errors_found = result.unwrap();
+    assert_eq!(1_usize, errors_found.len());
+    assert!(errors_found[0].contains("DivideByZero"));
+
+    let result_file_handler = FileTextHandler::new();
+    let mut result_name = playground_name.clone();
+    result_name.push(&OsString::from("/composed.txt"));
+
+    let result_text = result_file_handler.read_text(&result_name).unwrap();
+
+    // Debug
+    println!("
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Composition result :
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+{}",
+        result_text);
+}
 

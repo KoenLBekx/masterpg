@@ -18,7 +18,17 @@ fn main() {
         let result = compose(source_path, &mut file_handler);
 
         match result {
-            Ok(_) => println!("{:?} processed succesfully.", source_path),
+            Ok(laconic_errors_found) => {
+                if laconic_errors_found.is_empty(){
+                    println!("{:?} processed succesfully.", source_path)
+                } else {
+                    println!("{:?} processed with errors in Laconic script(s):.", source_path);
+
+                    for err in laconic_errors_found {
+                        println!("*** {}\n", err);
+                    }
+                }
+            },
             Err(err) => println!("Error while processing {:?} : {}", source_path, err),
         }
     }
