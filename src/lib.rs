@@ -16,6 +16,7 @@ use nom::{
     combinator::{map, opt, peek},
     IResult,
     multi::{many0, many1},
+    Parser,
     sequence::{delimited, pair, preceded, terminated}
 };
 use string_io_and_mock::TextIOHandler;
@@ -470,7 +471,7 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
             }
         ),
         preceded(opt(whitespace), tag(closing_mark))
-    )(input)
+    ).parse(input)
 }
 
 fn master_page_tag_opening_children(input: &str) -> IResult<&str, FlatPageContent> {
@@ -495,7 +496,7 @@ fn master_page_closing_tag(input: &str) -> IResult<&str, FlatPageContent> {
             preceded(opt(whitespace), tag(">"))
         ),
         |found| FlatPageContent::ClosingMPTag(String::from(found))
-    )(input)
+    ).parse(input)
 }
 
 fn other_flat_content(input: &str) -> IResult<&str, FlatPageContent> {
@@ -522,7 +523,7 @@ fn other_flat_content(input: &str) -> IResult<&str, FlatPageContent> {
 
             FlatPageContent::Other(result_str)
         }
-    )(input)
+    ).parse(input)
 }
 
 fn read_flat_content(input: &str) -> Result<Vec<FlatPageContent>, String> {
@@ -535,7 +536,7 @@ fn read_flat_content(input: &str) -> Result<Vec<FlatPageContent>, String> {
             master_page_tag_opening_children,
             master_page_closing_tag,
         ))
-    )(input);
+    ).parse(input);
 
     match nom_result {
         Err(_) => Err("Malformed input string.".to_string()),
@@ -2643,5 +2644,170 @@ Oh, never mind.
 ".trim().to_string();
 
         assert_eq!(expected, output);
+    }
+
+    mod delimited_by_same_nr {
+        use nom::{
+            branch::alt,
+            bytes::complete::{is_a, is_not, tag, take_while},
+            combinator::{map, not, opt, peek, verify},
+            error::ErrorKind,
+            IResult,
+            multi::{many0, many1, many1_count},
+            Parser,
+            sequence::{delimited, pair, preceded, terminated}
+        };
+
+        #[test]
+        fn simple_is_a() {
+            fn parse_it(s: &str) -> IResult<&str, &str> {
+                delimited(
+                    is_a("{"),
+                    is_a("abc"),
+                    is_a("}")
+                ).parse(s)
+            }
+
+            assert_eq!(parse_it("{{{aaa}}}"), Ok(("", "aaa")));
+        }
+
+        // Get inspiration from
+        // https://users.rust-lang.org/t/solved-nom-count-nested-brackets-in-markdown-link/51608/2
+
+        fn parse_braces() -> impl Fn(&str) -> IResult<&str, &str>{
+            |s: &str|{
+                let mut opening_count = 0_usize;
+                let mut other_found = false;
+                let mut closing_found = 0_usize;
+                let mut retuval: IResult<&str, &str> = Ok(("", ""));
+
+                let cc = s.chars();
+
+                for (ix, nextChar) in cc.enumerate() {
+                    match nextChar {
+                        '{' if !other_found => opening_count += 1,
+                        '}' if opening_count > 0 =>
+                            {
+                                closing_found += 1;
+                                other_found = true;
+                            },
+                        _ if opening_count == 0 =>
+                            {
+                                retuval =  std::result::Result::Err(
+                                    nom::Err::Error(
+                                        nom::error::Error::new(&s[0..=ix], ErrorKind::TakeUntil)
+                                    )
+                                );
+                                break;
+                            },
+                        _ => 
+                            {
+                                other_found = true;
+                                closing_found = 0;
+                            },
+                    }
+
+                    if (opening_count > 0) && (opening_count == closing_found) {
+                        println!("breaking Ok; ix={ix}, opening_count={opening_count}");
+                        retuval = Ok((&s[ix+1..],&s[opening_count..=(ix-opening_count)]));
+                        break;
+                    }
+                }
+
+                if opening_count > closing_found {
+                    retuval =  std::result::Result::Err(
+                        nom::Err::Error(
+                            nom::error::Error::new(s, ErrorKind::TakeUntil)
+                        )
+                    );
+                }
+
+                retuval
+            }
+        }
+
+        #[test]
+        fn three_braces_simple() {
+            assert_eq!(
+                parse_braces()("{{{aaa}}}xxx"),
+                Ok(("xxx", "aaa"))
+            );
+        }
+
+        #[test]
+        fn three_braces_extra_brace_in_rest() {
+            assert_eq!(
+                parse_braces()("{{{aaa}}}}xxx"),
+                Ok(("}xxx", "aaa"))
+            );
+        }
+
+        #[test]
+        fn three_braces_single_content_braces_pair() {
+            assert_eq!(
+                parse_braces()("{{{aaa {---} bbb}}}xxx"),
+                Ok(("xxx", "aaa {---} bbb"))
+            );
+        }
+
+        #[test]
+        fn three_braces_single_content_opening_brace() {
+            assert_eq!(
+                parse_braces()("{{{aaa { bbb}}}xxx"),
+                Ok(("xxx", "aaa { bbb"))
+            );
+        }
+
+        #[test]
+        fn three_braces_single_content_closing_brace() {
+            assert_eq!(
+                parse_braces()("{{{aaa } bbb}}}xxx"),
+                Ok(("xxx", "aaa } bbb"))
+            );
+        }
+
+        #[test]
+        fn single_braces_simple() {
+            assert_eq!(
+                parse_braces()("{aaa}{xxx"),
+                Ok(("{xxx", "aaa"))
+            );
+        }
+
+        #[test]
+        fn combined() {
+            assert_eq!(
+                preceded(
+                    tag("???"),
+                    parse_braces()
+                ).parse("???{aaa}{xxx"),
+
+                Ok(("{xxx", "aaa"))
+            );
+        }
+
+        #[test]
+        fn two_opening_one_closing() {
+            assert_eq!(
+                parse_braces()("{{aaa}xxx"),
+                std::result::Result::Err(nom::Err::Error(nom::error::Error::new("{{aaa}xxx", ErrorKind::TakeUntil)))
+            );
+        }
+
+        #[test]
+        fn no_braces() {
+            assert_eq!(
+                parse_braces()("cccxxx"),
+                std::result::Result::Err(nom::Err::Error(nom::error::Error::new("c", ErrorKind::TakeUntil)))
+            );
+        }
+
+        #[test]
+        fn closing_braces_at_start() {
+            assert_eq!(
+                parse_braces()("}cccxxx"),
+                std::result::Result::Err(nom::Err::Error(nom::error::Error::new("}", ErrorKind::TakeUntil)))
+            );
+        }
     }
 }

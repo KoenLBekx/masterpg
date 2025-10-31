@@ -13,7 +13,7 @@ documentation = "https://docs.rs/masterpg"
 
 [dependencies]
 laconic = "2.0.0"
-nom = { version = "7.1.3", features = ["alloc"] }
+nom = "8.0.0"
 serial_test = { version = "2.0.0", features = ["file_locks"] }
 string_io_and_mock = "1.0.1"
 tree_by_path = "1.0.0"
