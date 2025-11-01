@@ -2673,8 +2673,7 @@ Oh, never mind.
 
         fn delimited_by_matching_multiples(opening: char, closing: char) -> impl Fn(&str) -> IResult<&str, &str>{
             move |s: &str|{
-                println!("Opening: |{opening}|, closing: |{closing}|");
-
+                let are_same = opening == closing;
                 let mut opening_count = 0_usize;
                 let mut other_found = false;
                 let mut closing_found = 0_usize;
@@ -2685,6 +2684,10 @@ Oh, never mind.
                 for (ix, next_char) in cc.enumerate() {
                     match next_char {
                         c if (c == opening) && (!other_found) => opening_count += 1,
+                        c if (c == opening) && are_same && other_found && (opening_count > 0) =>
+                            {
+                                closing_found += 1;
+                            },
                         c if (c == closing) && (opening_count > 0) =>
                             {
                                 closing_found += 1;
@@ -2733,7 +2736,7 @@ Oh, never mind.
         }
 
         #[test]
-        fn three_braces_extra_brace_in_rest() {
+        fn three_braces_surplus(){
             assert_eq!(
                 delimited_by_matching_multiples('{', '}')("{{{aaa}}}}xxx"),
                 Ok(("}xxx", "aaa"))
@@ -2805,6 +2808,46 @@ Oh, never mind.
             assert_eq!(
                 delimited_by_matching_multiples('{', '}')("}cccxxx"),
                 std::result::Result::Err(nom::Err::Error(nom::error::Error::new("}", ErrorKind::TakeUntil)))
+            );
+        }
+
+        #[test]
+        fn same_single() {
+            assert_eq!(
+                delimited_by_matching_multiples('*', '*')("*aaa*{xxx"),
+                Ok(("{xxx", "aaa"))
+            );
+        }
+
+        #[test]
+        fn same_double() {
+            assert_eq!(
+                delimited_by_matching_multiples('*', '*')("**aaa*bbb*ccc**xxx"),
+                Ok(("xxx", "aaa*bbb*ccc"))
+            );
+        }
+
+        #[test]
+        fn same_surplus() {
+            assert_eq!(
+                delimited_by_matching_multiples('*', '*')("*aaa**xxx"),
+                Ok(("*xxx", "aaa"))
+            );
+        }
+
+        #[test]
+        fn not_same_empty() {
+            assert_eq!(
+                delimited_by_matching_multiples('<', '>')("<>xxx"),
+                Ok(("xxx", ""))
+            );
+        }
+
+        #[test]
+        fn same_empty() {
+            assert_eq!(
+                delimited_by_matching_multiples('*', '*')("**xxx"),
+                std::result::Result::Err(nom::Err::Error(nom::error::Error::new("**xxx", ErrorKind::TakeUntil)))
             );
         }
     }
