@@ -1,7 +1,5 @@
 #![doc = include_str!("../README.md")]
 
-// TODO: document the <+laconic ...> tag.
-
 //{ use ...
 use std::cmp::min;
 use std::collections::HashMap;
@@ -14,6 +12,7 @@ use nom::{
     branch::alt,
     bytes::complete::{is_a, is_not, tag},
     combinator::{map, opt, peek},
+    error::ErrorKind,
     IResult,
     multi::{many0, many1},
     Parser,
@@ -23,8 +22,8 @@ use string_io_and_mock::TextIOHandler;
 use tree_by_path::{Node, TraverseAction}; //}
 
 //{ Constants
-const LACONIC_SCRIPT_OPEN: &str = "{";
-const LACONIC_SCRIPT_CLOSE: &str = "}";
+const LACONIC_SCRIPT_OPEN: char = '{';
+const LACONIC_SCRIPT_CLOSE: char = '}';
 //}
 
 /// See the crate's documentation about functionality.
@@ -297,6 +296,11 @@ struct LaconicScript {
 impl LaconicScript {
     fn new(words: Vec<String>) -> Result<Self, String> {
         if words.len() != 2 {
+            #[cfg(test)]
+            for (wnr, wd) in words.iter().enumerate() {
+                println!("Word {wnr}: {}", wd);
+            }
+
             return Err("Not exactly 2 attributes found after tag name in <+laconic .../> tag".to_string());
         }
 
@@ -416,6 +420,90 @@ fn whitespace(input: &str)-> IResult<&str, &str> {
     is_a(" \t\n\r")(input)
 }
 
+fn delimited_by_matching_multiples(opening: char, closing: char) -> impl Fn(&str) -> IResult<&str, &str>{
+    move |s: &str|{
+        let are_same = opening == closing;
+        let mut opening_count = 0_usize;
+        let mut other_found = false;
+        let mut closing_found = 0_usize;
+        let mut retuval: IResult<&str, &str> = Ok(("", ""));
+        let mut opening_bytes_len = 0_usize;
+        let mut next_char_len: usize;
+        let mut pos = 0_usize;
+        let mut prev_pos = 0_usize;
+        let mut before_closing_pos = 0_usize;
+
+        let cc = s.chars();
+
+        for next_char in cc {
+            next_char_len = next_char.len_utf8();
+
+            #[cfg(test)]
+            println!("next_char: {}, len: {}", next_char, next_char_len);
+
+            match next_char {
+                c if (c == opening) && (!other_found) =>
+                    {
+                        opening_count += 1;
+                        opening_bytes_len += next_char_len;
+                    },
+                c if (c == opening) && are_same && other_found && (opening_count > 0) =>
+                    {
+                        if closing_found == 0 {
+                            before_closing_pos = prev_pos;
+                        }
+
+                        closing_found += 1;
+                    },
+                c if (c == closing) && (opening_count > 0) =>
+                    {
+                        if closing_found == 0 {
+                            before_closing_pos = prev_pos;
+                        }
+
+                        closing_found += 1;
+                        other_found = true;
+                    },
+                _ if opening_count == 0 =>
+                    {
+                        retuval =  std::result::Result::Err(
+                            nom::Err::Error(
+                                nom::error::Error::new(&s[0..=pos], ErrorKind::TakeUntil)
+                            )
+                        );
+                        break;
+                    },
+                _ => 
+                    {
+                        other_found = true;
+                        closing_found = 0;
+                    },
+            }
+
+            if (opening_count > 0) && (opening_count == closing_found) {
+                #[cfg(test)]
+                println!("pos: {pos}");
+
+                retuval = Ok((&s[pos + next_char_len..],&s[opening_bytes_len..=before_closing_pos]));
+                break;
+            }
+
+            prev_pos = pos;
+            pos += next_char_len;
+        }
+
+        if opening_count > closing_found {
+            retuval =  std::result::Result::Err(
+                nom::Err::Error(
+                    nom::error::Error::new(s, ErrorKind::TakeUntil)
+                )
+            );
+        }
+
+        retuval
+    }
+}
+
 fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<&str, Vec<String>> {
     let closing_mark = match self_contained {
         true => "/>",
@@ -435,11 +523,7 @@ fn master_page_tag_opening_content(input: &str, self_contained:bool) -> IResult<
                                 alt((
                                     is_not(format!(" \t\n\r/><{}", LACONIC_SCRIPT_OPEN).as_str()),
                                     terminated(tag("/"), peek(is_not(">"))),
-                                    delimited(
-                                        tag(LACONIC_SCRIPT_OPEN),
-                                        is_not(LACONIC_SCRIPT_CLOSE),
-                                        tag(LACONIC_SCRIPT_CLOSE),
-                                    )
+                                    delimited_by_matching_multiples(LACONIC_SCRIPT_OPEN, LACONIC_SCRIPT_CLOSE)
                                 ))
                             ),
                             |list: Vec<&str>|
@@ -989,8 +1073,7 @@ fn content_tree_to_output_string(content_tree: &mut Node<NestedPageContent>) -> 
 mod tests {
     use super::*;
     use nom::{
-        bytes::complete::{is_a, tag},
-        sequence::tuple,
+        bytes::complete::{is_a, tag}
     };
     use string_io_and_mock::MockTextHandler;
     use tree_by_path::Node;
@@ -1437,7 +1520,9 @@ Welcome to my site about <+placeholder title/>!
 <+output out.htm/>
 <+master boilerplate.mpm/>
 <+actual title>Introduction</+actual>
-<+laconic test {$#width 12.4}/>
+<+laconic - {{
+$#width 12.4
+}}/>
 <+actual body>
 Welcome to my site about <+placeholder title/>!
 </+actual>
@@ -1450,7 +1535,7 @@ Welcome to my site about <+placeholder title/>!
         let repr = utils::content_tree_to_string(&mut root);
 
         assert_eq!(
-            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other(Introducti)] Laconic(test $#width 12.4) Actual(body)[Other(Welcome to) PlaceHolder(title) Other(!)]]".to_string(),
+            "Main[Output(out.htm) Master(boilerplate.mpm) Actual(title)[Other(Introducti)] Laconic(- $#width 12.4) Actual(body)[Other(Welcome to) PlaceHolder(title) Other(!)]]".to_string(),
             repr
         );
     }
@@ -2387,11 +2472,12 @@ Calculation outcome is: 2.4</body>
         */
 
         fn parser(input: &str) -> nom:: IResult<&str, (&str, &str, &str)> {
-            tuple((
+            // Trait Parser is implemented directly on tuples. So : (_,_).parse(input)
+            (
                 tag("OK then, the timestamp is : ts="),
                 is_a("0123456789"),   
                 tag(". Happy now ?"),
-            ))(input)
+            ).parse(input)
         }
 
         let parse_result = parser(output.as_str());
@@ -2476,7 +2562,9 @@ Calculation outcome is: 2.4</body>
 <title><+placeholder title/></title>
 </head>
 <body>
-<+laconic FIB4 {$#fib4 o#fib 4}/>
+<+laconic FIB4 {
+$#fib4 o#fib 4 #
+}/>
 <+PLACEHOLDER page_content/>
 </body>
 </html>
@@ -2512,7 +2600,7 @@ Fibonacci(4) is: <+laconic - {q,v#fib4}/>
         let output = text_handler.read_text(&OsStr::new("testPage.htm")).unwrap();
 
         // Debug
-        println!("Composed file:\n{}", &output);
+        // println!("Composed file:\n{}", &output);
 
         let expected = "
 <!doctype html>
@@ -2647,6 +2735,8 @@ Oh, never mind.
     }
 
     mod delimited_by_same_nr {
+        use crate::delimited_by_matching_multiples;
+
         use nom::{
             bytes::complete::{is_a, tag},
             error::ErrorKind,
@@ -2668,65 +2758,6 @@ Oh, never mind.
             assert_eq!(parse_it("{{{aaa}}}"), Ok(("", "aaa")));
         }
 
-        // Get inspiration from
-        // https://users.rust-lang.org/t/solved-nom-count-nested-brackets-in-markdown-link/51608/2
-
-        fn delimited_by_matching_multiples(opening: char, closing: char) -> impl Fn(&str) -> IResult<&str, &str>{
-            move |s: &str|{
-                let are_same = opening == closing;
-                let mut opening_count = 0_usize;
-                let mut other_found = false;
-                let mut closing_found = 0_usize;
-                let mut retuval: IResult<&str, &str> = Ok(("", ""));
-
-                let cc = s.chars();
-
-                for (ix, next_char) in cc.enumerate() {
-                    match next_char {
-                        c if (c == opening) && (!other_found) => opening_count += 1,
-                        c if (c == opening) && are_same && other_found && (opening_count > 0) =>
-                            {
-                                closing_found += 1;
-                            },
-                        c if (c == closing) && (opening_count > 0) =>
-                            {
-                                closing_found += 1;
-                                other_found = true;
-                            },
-                        _ if opening_count == 0 =>
-                            {
-                                retuval =  std::result::Result::Err(
-                                    nom::Err::Error(
-                                        nom::error::Error::new(&s[0..=ix], ErrorKind::TakeUntil)
-                                    )
-                                );
-                                break;
-                            },
-                        _ => 
-                            {
-                                other_found = true;
-                                closing_found = 0;
-                            },
-                    }
-
-                    if (opening_count > 0) && (opening_count == closing_found) {
-                        retuval = Ok((&s[ix+1..],&s[opening_count..=(ix-opening_count)]));
-                        break;
-                    }
-                }
-
-                if opening_count > closing_found {
-                    retuval =  std::result::Result::Err(
-                        nom::Err::Error(
-                            nom::error::Error::new(s, ErrorKind::TakeUntil)
-                        )
-                    );
-                }
-
-                retuval
-            }
-        }
-
         #[test]
         fn three_braces_simple() {
             assert_eq!(
@@ -2744,25 +2775,25 @@ Oh, never mind.
         }
 
         #[test]
-        fn three_braces_single_content_braces_pair() {
+        fn two_braces_single_content_braces_pair() {
             assert_eq!(
-                delimited_by_matching_multiples('{', '}')("{{{aaa {---} bbb}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{aaa {---} bbb}}xxx"),
                 Ok(("xxx", "aaa {---} bbb"))
             );
         }
 
         #[test]
-        fn three_braces_single_content_opening_brace() {
+        fn two_braces_single_content_opening_brace() {
             assert_eq!(
-                delimited_by_matching_multiples('{', '}')("{{{aaa { bbb}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{aaa { bbb}}xxx"),
                 Ok(("xxx", "aaa { bbb"))
             );
         }
 
         #[test]
-        fn three_braces_single_content_closing_brace() {
+        fn two_braces_single_content_closing_brace() {
             assert_eq!(
-                delimited_by_matching_multiples('{', '}')("{{{aaa } bbb}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{aaa } bbb}}xxx"),
                 Ok(("xxx", "aaa } bbb"))
             );
         }
@@ -2836,6 +2867,46 @@ Oh, never mind.
         }
 
         #[test]
+        fn high_chars_in_content() {
+            assert_eq!(
+                delimited_by_matching_multiples('<', '>')("<--€-經-->xxx"),
+                Ok(("xxx", "--€-經--"))
+            );
+        }
+
+        #[test]
+        fn high_chars_as_delimiters() {
+            assert_eq!(
+                delimited_by_matching_multiples('☳', '☶')("☳---☶xxx"),
+                Ok(("xxx", "---"))
+            );
+        }
+
+        #[test]
+        fn mixed_len_chars_as_delimiters_1() {
+            assert_eq!(
+                delimited_by_matching_multiples('€', '|')("€---|₭xxx"),
+                Ok(("₭xxx", "---"))
+            );
+        }
+
+        #[test]
+        fn mixed_len_chars_as_delimiters_2() {
+            assert_eq!(
+                delimited_by_matching_multiples('|', '€')("|---€₭xxx"),
+                Ok(("₭xxx", "---"))
+            )
+        }
+
+        #[test]
+        fn high_chars_as_both() {
+            assert_eq!(
+                delimited_by_matching_multiples('☳', '☶')("☳-經-☶€xxx"),
+                Ok(("€xxx", "-經-"))
+            );
+        }
+
+        #[test]
         fn not_same_empty() {
             assert_eq!(
                 delimited_by_matching_multiples('<', '>')("<>xxx"),
@@ -2850,5 +2921,16 @@ Oh, never mind.
                 std::result::Result::Err(nom::Err::Error(nom::error::Error::new("**xxx", ErrorKind::TakeUntil)))
             );
         }
+
+        #[test]
+        fn multiple_lines() {
+            assert_eq!(
+                delimited_by_matching_multiples('{', '}')("{{
+[s Tadaaa!]
+}}"),
+                Ok(("", "\n[s Tadaaa!]\n"))
+            );
+        }
+
     }
 }

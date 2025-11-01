@@ -140,10 +140,13 @@ Version 2.0.0 of the `masterpg` crate saw the addition of `<+laconic ...>` tags.
 
 These tags offer both way more functionality and way more flexibility in calculations than the `<+calc ...>` tags.
 
-A `<+laconic tagname {script}/>` tag contains a tagname or a `-` marker, just like the `<+calc>` tag, but next it contains a Laconic expression or script enclosed in curly braces. E.g.:
+A `<+laconic tagname {script}/>` tag contains a tagname or a `-` marker, just like the `<+calc>` tag, but next it contains a Laconic expression or script enclosed in matching multiples of curly braces. E.g.:
 
->`<+laconic - {* 200 c#gold}>`<br/>
-> will put the product of 200 and the golden ratio constant in the composed file.
+>`<+laconic - {* 200 c#gold}/>`<br/>
+> will put the product of 200 and the golden ratio constant in the composed file.<br/>
+
+>`<+laconic - {{? v#isHtml [s <style>.small {font-size: .5em;}</style>] #}}/>`<br/>
+> will insert an HTML style tag into the composed file if variable #isHtml has a truthy value, without any need to escape the single curly braces, as the entire Laconic expression is enclosed in double curly braces.
 
 Laconic scripts are unaware about other tags in source files, but there's no need for that:
 

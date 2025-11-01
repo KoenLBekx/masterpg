@@ -1,6 +1,6 @@
 [package]
 name = "masterpg"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2021"
 description = "Command-line utility and library function that compose web pages, or any texts, by resolving placeholders with actual content from referred or same files."
 license = "MIT OR Apache-2.0"
