@@ -2,15 +2,15 @@
 
 ## Overview
 
-The `masterpg` utility composes files - usually static HTML files - as an alternative to a missing
+The `masterpg` utility composes files by replacing placeholder tags with actual content defined elsewhere, possibly in other files. Initially it was meant for static HTML files, as an alternative to a missing
 `<include />` tag in HTML.
 
 This crate provides both
 - a library function,
 - and a command-line utility.
 
-Both the library function and the command-line utility were designed to be used web-server-side or during the publishing phase of web pages, albeit they
-can compose any kind of text files.
+Both the library function and the command-line utility were originally designed to be used web-server-side or during the publishing phase of web pages, albeit they
+can compose any kind of UTF-8 text files.
 
 
 ## Library function
@@ -174,7 +174,7 @@ E.g.:
 >`    $#cells * v#rows v#columns`<br/>
 >`}/>` 
 
-See [crates.io](https://crates.io/crates/laconic) and its documentation link for the full documentation of the Laconic language.
+Laconic offers much more than simple calculations on numeric variables! See [crates.io](https://crates.io/crates/laconic) and its documentation link for the full documentation of the Laconic language.
 
 ## How input files are processed
 
