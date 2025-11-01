@@ -2648,14 +2648,11 @@ Oh, never mind.
 
     mod delimited_by_same_nr {
         use nom::{
-            branch::alt,
-            bytes::complete::{is_a, is_not, tag, take_while},
-            combinator::{map, not, opt, peek, verify},
+            bytes::complete::{is_a, tag},
             error::ErrorKind,
             IResult,
-            multi::{many0, many1, many1_count},
             Parser,
-            sequence::{delimited, pair, preceded, terminated}
+            sequence::{delimited, preceded}
         };
 
         #[test]
@@ -2674,8 +2671,10 @@ Oh, never mind.
         // Get inspiration from
         // https://users.rust-lang.org/t/solved-nom-count-nested-brackets-in-markdown-link/51608/2
 
-        fn parse_braces() -> impl Fn(&str) -> IResult<&str, &str>{
-            |s: &str|{
+        fn delimited_by_matching_multiples(opening: char, closing: char) -> impl Fn(&str) -> IResult<&str, &str>{
+            move |s: &str|{
+                println!("Opening: |{opening}|, closing: |{closing}|");
+
                 let mut opening_count = 0_usize;
                 let mut other_found = false;
                 let mut closing_found = 0_usize;
@@ -2683,10 +2682,10 @@ Oh, never mind.
 
                 let cc = s.chars();
 
-                for (ix, nextChar) in cc.enumerate() {
-                    match nextChar {
-                        '{' if !other_found => opening_count += 1,
-                        '}' if opening_count > 0 =>
+                for (ix, next_char) in cc.enumerate() {
+                    match next_char {
+                        c if (c == opening) && (!other_found) => opening_count += 1,
+                        c if (c == closing) && (opening_count > 0) =>
                             {
                                 closing_found += 1;
                                 other_found = true;
@@ -2708,7 +2707,6 @@ Oh, never mind.
                     }
 
                     if (opening_count > 0) && (opening_count == closing_found) {
-                        println!("breaking Ok; ix={ix}, opening_count={opening_count}");
                         retuval = Ok((&s[ix+1..],&s[opening_count..=(ix-opening_count)]));
                         break;
                     }
@@ -2729,7 +2727,7 @@ Oh, never mind.
         #[test]
         fn three_braces_simple() {
             assert_eq!(
-                parse_braces()("{{{aaa}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{{aaa}}}xxx"),
                 Ok(("xxx", "aaa"))
             );
         }
@@ -2737,7 +2735,7 @@ Oh, never mind.
         #[test]
         fn three_braces_extra_brace_in_rest() {
             assert_eq!(
-                parse_braces()("{{{aaa}}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{{aaa}}}}xxx"),
                 Ok(("}xxx", "aaa"))
             );
         }
@@ -2745,7 +2743,7 @@ Oh, never mind.
         #[test]
         fn three_braces_single_content_braces_pair() {
             assert_eq!(
-                parse_braces()("{{{aaa {---} bbb}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{{aaa {---} bbb}}}xxx"),
                 Ok(("xxx", "aaa {---} bbb"))
             );
         }
@@ -2753,7 +2751,7 @@ Oh, never mind.
         #[test]
         fn three_braces_single_content_opening_brace() {
             assert_eq!(
-                parse_braces()("{{{aaa { bbb}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{{aaa { bbb}}}xxx"),
                 Ok(("xxx", "aaa { bbb"))
             );
         }
@@ -2761,7 +2759,7 @@ Oh, never mind.
         #[test]
         fn three_braces_single_content_closing_brace() {
             assert_eq!(
-                parse_braces()("{{{aaa } bbb}}}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{{aaa } bbb}}}xxx"),
                 Ok(("xxx", "aaa } bbb"))
             );
         }
@@ -2769,7 +2767,7 @@ Oh, never mind.
         #[test]
         fn single_braces_simple() {
             assert_eq!(
-                parse_braces()("{aaa}{xxx"),
+                delimited_by_matching_multiples('{', '}')("{aaa}{xxx"),
                 Ok(("{xxx", "aaa"))
             );
         }
@@ -2779,7 +2777,7 @@ Oh, never mind.
             assert_eq!(
                 preceded(
                     tag("???"),
-                    parse_braces()
+                    delimited_by_matching_multiples('{', '}')
                 ).parse("???{aaa}{xxx"),
 
                 Ok(("{xxx", "aaa"))
@@ -2789,7 +2787,7 @@ Oh, never mind.
         #[test]
         fn two_opening_one_closing() {
             assert_eq!(
-                parse_braces()("{{aaa}xxx"),
+                delimited_by_matching_multiples('{', '}')("{{aaa}xxx"),
                 std::result::Result::Err(nom::Err::Error(nom::error::Error::new("{{aaa}xxx", ErrorKind::TakeUntil)))
             );
         }
@@ -2797,7 +2795,7 @@ Oh, never mind.
         #[test]
         fn no_braces() {
             assert_eq!(
-                parse_braces()("cccxxx"),
+                delimited_by_matching_multiples('{', '}')("cccxxx"),
                 std::result::Result::Err(nom::Err::Error(nom::error::Error::new("c", ErrorKind::TakeUntil)))
             );
         }
@@ -2805,7 +2803,7 @@ Oh, never mind.
         #[test]
         fn closing_braces_at_start() {
             assert_eq!(
-                parse_braces()("}cccxxx"),
+                delimited_by_matching_multiples('{', '}')("}cccxxx"),
                 std::result::Result::Err(nom::Err::Error(nom::error::Error::new("}", ErrorKind::TakeUntil)))
             );
         }
